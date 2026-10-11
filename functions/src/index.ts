@@ -15,6 +15,7 @@ import * as attendance from './attendance';
 import * as credits from './credits';
 import * as lessons from './lessons';
 import * as invoicePdf from './invoicePdf';
+import * as jobs from './jobs';
 import * as members from './members';
 import * as money from './money';
 import * as series from './series';
@@ -249,4 +250,31 @@ export const getInvoicePdfUrl = onCall(async (req) => {
   const input = parse(InvoiceRef, req.data);
   const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin', 'student']);
   return invoicePdf.invoicePdfUrl(db(), bucket(), input, actor);
+});
+
+export const expireLots = onSchedule({ ...JOB, schedule: 'every day 00:15' }, async () => {
+  const res = await jobs.forEachSchool(db(), (schoolId) => jobs.expireLots(db(), schoolId));
+  console.log(`expireLots: ${res.reduce((n, r) => n + r.lots, 0)} lots expired`);
+});
+
+export const reconcileLedger = onSchedule({ ...JOB, schedule: 'every day 03:00' }, async () => {
+  const res = await jobs.forEachSchool(db(), (schoolId) => jobs.reconcileLedger(db(), schoolId));
+  const problems = res.reduce((n, r) => n + r.problemCount, 0);
+  if (problems) console.error(`reconcileLedger: ${problems} problems written to auditLog`);
+});
+
+const AdjustCredits = z.object({
+  schoolId: id,
+  studentId: id,
+  delta: z.number().int().min(-100).max(100).refine((n) => n !== 0, 'Adjust by at least one session'),
+  reason: z.string().trim().min(3).max(300),
+  enrolmentId: id.nullish(),
+  validityDays: z.number().int().min(1).max(3650).nullish(),
+  idempotencyKey: Key,
+});
+
+export const adjustCredits = onCall(async (req) => {
+  const input = parse(AdjustCredits, req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
+  return jobs.adjustCredits(db(), input, actor);
 });

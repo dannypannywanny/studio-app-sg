@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router';
 import { formatDate, formatMoney, type LedgerType } from '@lessonkaki/shared';
 import { call, db } from '../firebase';
 import { studentName, useDoc, useFormatTs, useQuery, useTimeZone } from '../hooks';
-import { useSchoolId } from '../session';
+import { useSchoolId, useSession } from '../session';
 import type { Enrolment, Invoice, LedgerEntry, Package, Student } from '../types';
 
 const LEDGER_LABEL: Record<LedgerType, string> = {
@@ -84,9 +84,91 @@ function SellPackage({ studentId }: { studentId: string }) {
   );
 }
 
+const adjustCredits = call<
+  { schoolId: string; studentId: string; delta: number; reason: string; enrolmentId: string | null; idempotencyKey: string },
+  { delta: number; settled: number }
+>('adjustCredits');
+
+/** Owner/admin: add or take away sessions by hand, with a reason (it goes in the ledger). */
+function AdjustCredits({ studentId, lots }: { studentId: string; lots: (Enrolment & { id: string })[] }) {
+  const schoolId = useSchoolId();
+  const [open, setOpen] = useState(false);
+  const [delta, setDelta] = useState(1);
+  const [reason, setReason] = useState('');
+  const [enrolmentId, setEnrolmentId] = useState('');
+  const [idempotencyKey, setKey] = useState(() => crypto.randomUUID());
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const usable = lots.filter((l) => l.status === 'active' || l.status === 'completed');
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await adjustCredits({ schoolId, studentId, delta, reason: reason.trim(), enrolmentId: enrolmentId || null, idempotencyKey });
+      setMessage(
+        `${res.delta > 0 ? 'Added' : 'Took away'} ${Math.abs(res.delta)} session${Math.abs(res.delta) === 1 ? '' : 's'}` +
+          (res.settled ? `; ${res.settled} owed lesson${res.settled === 1 ? '' : 's'} paid off.` : '.'),
+      );
+      setReason('');
+      setKey(crypto.randomUUID());
+      setOpen(false);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <div className="row">
+        <button className="btn btn-sm" onClick={() => setOpen(true)}>
+          Adjust credits…
+        </button>
+        {message && <p className="success">{message}</p>}
+      </div>
+    );
+  }
+  return (
+    <div className="card form-grid">
+      <label className="field">
+        <span>Sessions (+ to add, − to take away)</span>
+        <input type="number" min={-100} max={100} step={1} value={delta} onChange={(e) => setDelta(Number(e.target.value))} />
+      </label>
+      <label className="field">
+        <span>Package</span>
+        <select value={enrolmentId} onChange={(e) => setEnrolmentId(e.target.value)}>
+          <option value="">{delta > 0 ? 'New manual credit' : 'Earliest-expiring first'}</option>
+          {usable.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.packageName} ({l.sessionsRemaining} left)
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="field span-all">
+        <span>Reason (kept in the ledger)</span>
+        <input value={reason} maxLength={300} onChange={(e) => setReason(e.target.value)} />
+      </label>
+      <div className="form-actions">
+        <button className="btn btn-primary" disabled={busy || !delta || reason.trim().length < 3} onClick={save}>
+          {busy ? 'Saving…' : 'Save adjustment'}
+        </button>
+        <button className="btn btn-ghost" onClick={() => setOpen(false)}>
+          Cancel
+        </button>
+        {error && <p className="error">{error}</p>}
+      </div>
+    </div>
+  );
+}
+
 export function StudentDetail() {
   const { studentId = '' } = useParams();
   const schoolId = useSchoolId();
+  const { role } = useSession();
   const tz = useTimeZone();
   const fmt = useFormatTs();
   const student = useDoc<Student>(`schools/${schoolId}/students/${studentId}`);
@@ -146,7 +228,10 @@ export function StudentDetail() {
       <SellPackage studentId={studentId} />
 
       <div className="card stack">
-        <h2>Packages</h2>
+        <div className="page-head">
+          <h2>Packages</h2>
+          {(role === 'owner' || role === 'admin') && <AdjustCredits studentId={studentId} lots={lots.data} />}
+        </div>
         {sortedLots.length === 0 ? (
           <p className="empty">No packages yet.</p>
         ) : (
