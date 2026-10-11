@@ -4,10 +4,23 @@
 // Banking apps read it to pre-fill a PayNow transfer to the school's UEN with the amount and reference.
 import { centsToDecimal } from './money';
 
+/** UTF-8 bytes of a string (shared has no DOM/Node libs, so no TextEncoder). */
+function utf8(input: string): number[] {
+  const out: number[] = [];
+  for (const ch of input) {
+    const c = ch.codePointAt(0)!;
+    if (c < 0x80) out.push(c);
+    else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f));
+    else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
+    else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 0x3f), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
+  }
+  return out;
+}
+
 /** CRC-16/CCITT-FALSE over the UTF-8 bytes, as 4 upper-case hex digits. */
 export function crc16(input: string): string {
   let crc = 0xffff;
-  for (const byte of new TextEncoder().encode(input)) {
+  for (const byte of utf8(input)) {
     crc ^= byte << 8;
     for (let i = 0; i < 8; i++) crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
   }
