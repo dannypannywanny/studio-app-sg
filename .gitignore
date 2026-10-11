@@ -18,3 +18,6 @@ serviceAccountKey*.json
 !replica/features.csv
 data/
 migration/raw/
+
+# Local-only emulator configs (e.g. a second stack on other ports)
+*.local.json

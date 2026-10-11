@@ -3,7 +3,10 @@ import {
   DEFAULT_POLICY,
   addDays,
   consumesCredit,
+  centsToDecimal,
   formatMoney,
+  isOverdue,
+  parseMoney,
   formatRrule,
   parseRrule,
   resolvePolicy,
@@ -94,5 +97,30 @@ describe('rrule-lite', () => {
       '2026-10-28T18:00:00.000Z',
       '2026-11-04T18:00:00.000Z',
     ]);
+  });
+});
+
+describe('money input', () => {
+  it('parses typed amounts into cents', () => {
+    expect(parseMoney('120')).toBe(12000);
+    expect(parseMoney('120.5')).toBe(12050);
+    expect(parseMoney(' $1,200.05 ')).toBe(120005);
+    expect(parseMoney('S$80')).toBe(8000);
+    expect(parseMoney('1.234')).toBeNull();
+    expect(parseMoney('-5')).toBeNull();
+    expect(parseMoney('abc')).toBeNull();
+  });
+  it('formats cents as a decimal string', () => {
+    expect(centsToDecimal(12050)).toBe('120.50');
+    expect(centsToDecimal(5)).toBe('0.05');
+    expect(() => centsToDecimal(-1)).toThrow();
+  });
+  it('knows when an invoice is overdue', () => {
+    const due = { toMillis: () => Date.parse('2026-10-01T00:00:00Z') };
+    const at = new Date('2026-10-02T00:00:00Z');
+    expect(isOverdue({ status: 'sent', dueDate: due }, at)).toBe(true);
+    expect(isOverdue({ status: 'partial', dueDate: due }, at)).toBe(true);
+    expect(isOverdue({ status: 'paid', dueDate: due }, at)).toBe(false);
+    expect(isOverdue({ status: 'sent', dueDate: due }, new Date('2026-09-30T00:00:00Z'))).toBe(false);
   });
 });

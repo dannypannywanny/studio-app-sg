@@ -19,6 +19,7 @@ export function Layout() {
           <NavLink to="/calendar">Calendar</NavLink>
           <NavLink to="/students">Students</NavLink>
           <NavLink to="/lessons">Lessons</NavLink>
+          <NavLink to="/invoices">Invoices</NavLink>
         </nav>
         <div className="account">
           <span className="muted">

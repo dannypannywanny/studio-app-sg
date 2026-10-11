@@ -13,6 +13,7 @@ import * as attendance from './attendance';
 import * as credits from './credits';
 import * as lessons from './lessons';
 import * as members from './members';
+import * as money from './money';
 import * as series from './series';
 
 initializeApp();
@@ -190,4 +191,40 @@ export const editLesson = onCall(async (req) => {
 export const extendSeries = onSchedule({ ...JOB, schedule: 'every day 02:00' }, async () => {
   const res = await series.extendAllSeries(db());
   console.log(`extendSeries: ${res.series} series, ${res.created} lessons created`);
+});
+
+const Key = z.string().min(8).max(100).regex(/^[A-Za-z0-9_-]+$/);
+
+const RecordPayment = z.object({
+  schoolId: id,
+  invoiceId: id,
+  amountCents: z.number().int().positive().max(100_000_000),
+  method: z.enum(money.PAYMENT_METHODS),
+  paidAt: z.iso.datetime({ offset: true }).optional(),
+  reference: z.string().trim().max(120).nullish(),
+  idempotencyKey: Key,
+});
+
+export const recordPayment = onCall(async (req) => {
+  const input = parse(RecordPayment, req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
+  return money.recordPayment(db(), { ...input, paidAt: input.paidAt ? new Date(input.paidAt) : undefined }, actor);
+});
+
+const VoidInvoice = z.object({
+  schoolId: id,
+  invoiceId: id,
+  reason: z.string().trim().min(3).max(300),
+  keepCredits: z.boolean().optional(),
+});
+
+export const voidInvoice = onCall(async (req) => {
+  const input = parse(VoidInvoice, req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
+  return money.voidInvoice(db(), input, actor);
+});
+
+export const markOverdue = onSchedule({ ...JOB, schedule: 'every day 08:00' }, async () => {
+  const res = await money.markOverdueAll(db());
+  console.log(`markOverdue: ${res.flagged} invoices flagged`);
 });

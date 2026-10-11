@@ -2,6 +2,8 @@ import type { ReactNode } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router';
 import { Layout } from './Layout';
 import { Calendar } from './pages/Calendar';
+import { InvoiceDetail } from './pages/InvoiceDetail';
+import { Invoices } from './pages/Invoices';
 import { FinishSignIn } from './pages/FinishSignIn';
 import { LessonDetail } from './pages/LessonDetail';
 import { Lessons } from './pages/Lessons';
@@ -52,6 +54,8 @@ export function App() {
             <Route path="students/:studentId" element={<StudentDetail />} />
             <Route path="lessons" element={<Lessons />} />
             <Route path="lessons/:lessonId" element={<LessonDetail />} />
+            <Route path="invoices" element={<Invoices />} />
+            <Route path="invoices/:invoiceId" element={<InvoiceDetail />} />
             <Route path="*" element={<Navigate to="/students" replace />} />
           </Route>
         </Routes>

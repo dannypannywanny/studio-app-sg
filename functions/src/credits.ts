@@ -110,6 +110,7 @@ export async function sellPackage(
       paidCents: 0,
       pendingCents: priceCents,
       status: 'sent',
+      overdueSince: null,
       issueDate: nowTs,
       dueDate: Timestamp.fromDate(new Date(at.getTime() + 7 * DAY_MS)),
       createdBy: actor.uid,

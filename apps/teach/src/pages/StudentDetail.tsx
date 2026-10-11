@@ -131,6 +131,16 @@ export function StudentDetail() {
           <span className="tile-label">Lessons owed</span>
           <span className={`tile-value ${s.summary?.sessionsOwed ? 'warn' : ''}`}>{s.summary?.sessionsOwed ?? 0}</span>
         </div>
+        <div className="tile">
+          <span className="tile-label">Outstanding</span>
+          <span className={`tile-value ${s.summary?.outstandingCents ? 'warn' : ''}`}>
+            {formatMoney(s.summary?.outstandingCents ?? 0)}
+          </span>
+        </div>
+        <div className="tile">
+          <span className="tile-label">Money credit</span>
+          <span className="tile-value">{formatMoney(s.summary?.moneyCreditCents ?? 0)}</span>
+        </div>
       </div>
 
       <SellPackage studentId={studentId} />
@@ -224,7 +234,9 @@ export function StudentDetail() {
             <tbody>
               {sortedInvoices.map((inv) => (
                 <tr key={inv.id}>
-                  <td>{inv.number}</td>
+                  <td>
+                    <Link to={`/invoices/${inv.id}`}>{inv.number}</Link>
+                  </td>
                   <td>{formatDate(inv.issueDate.toDate(), tz)}</td>
                   <td>{formatDate(inv.dueDate.toDate(), tz)}</td>
                   <td>{inv.lines.map((l) => l.desc).join(', ')}</td>

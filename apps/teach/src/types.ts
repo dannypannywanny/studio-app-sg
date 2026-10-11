@@ -50,7 +50,7 @@ export interface Student {
   email?: string;
   phone?: string;
   status: StudentStatus;
-  summary?: Partial<StudentSummary>;
+  summary?: Partial<StudentSummary> & { outstandingCents?: number; moneyCreditCents?: number };
   createdAt?: Ts;
 }
 
@@ -81,12 +81,35 @@ export interface Invoice {
   number: string;
   studentId: string;
   currency: string;
+  subtotalCents: number;
+  discountCents: number;
   totalCents: number;
+  paidCents: number;
   pendingCents: number;
   status: InvoiceStatus;
   issueDate: Ts;
   dueDate: Ts;
   lines: { desc: string; qty: number; unitCents: number }[];
+  overdueSince?: Ts | null;
+  voidReason?: string | null;
+  paidAt?: Ts | null;
+  pdfPath?: string | null;
+  paynow?: { payload: string; reference: string; amountCents: number } | null;
+}
+
+export type PaymentMethod = 'paynow' | 'bank' | 'cash';
+
+export interface Payment {
+  invoiceId: string;
+  invoiceNumber: string;
+  studentId: string;
+  amountCents: number;
+  appliedCents: number;
+  overpaymentCents: number;
+  method: PaymentMethod | 'card_hitpay';
+  reference: string | null;
+  status: string;
+  paidAt: Ts;
 }
 
 export interface Lesson {
