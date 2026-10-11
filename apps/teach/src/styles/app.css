@@ -352,6 +352,101 @@ select:focus {
   max-width: 360px;
 }
 
+/* Calendar (S02) */
+.calendar {
+  padding: 0;
+  overflow-x: auto;
+}
+.cal-head,
+.cal-body {
+  display: grid;
+  grid-template-columns: 56px repeat(7, minmax(110px, 1fr));
+  min-width: 840px;
+}
+.cal-head {
+  border-bottom: 1px solid var(--color-border);
+}
+.cal-day-head {
+  padding: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  border-left: 1px solid var(--color-border);
+}
+.cal-day-head.today {
+  color: var(--brand-primary);
+}
+.cal-body {
+  position: relative;
+}
+.cal-hour {
+  font-size: 0.7rem;
+  color: var(--color-muted);
+  text-align: right;
+  padding-right: var(--space-2);
+  transform: translateY(-0.5em);
+}
+.cal-col {
+  position: relative;
+  border-left: 1px solid var(--color-border);
+}
+.cal-col.today {
+  background: var(--color-row-hover);
+}
+.cal-slot {
+  border-top: 1px solid var(--color-border);
+}
+.cal-event {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  overflow: hidden;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  line-height: 1.3;
+  text-decoration: none;
+  color: var(--color-text);
+  background: var(--color-info-bg);
+  border-left: 3px solid var(--brand-primary);
+}
+.cal-event:hover {
+  filter: brightness(0.97);
+}
+.cal-event.state-marked,
+.cal-key.state-marked {
+  background: var(--color-success-bg);
+  border-left-color: var(--color-success);
+}
+.cal-event.state-partial {
+  background: var(--color-warning-bg);
+  border-left-color: var(--color-warning);
+}
+.cal-event.state-cancelled,
+.cal-key.state-cancelled {
+  background: var(--color-row-hover);
+  border-left-color: var(--color-muted);
+  color: var(--color-muted);
+  text-decoration: line-through;
+}
+.cal-key {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin: 0 var(--space-1) 0 var(--space-3);
+  vertical-align: -1px;
+  border-radius: 3px;
+  background: var(--color-info-bg);
+  border-left: 3px solid var(--brand-primary);
+}
+.legend {
+  font-size: var(--text-sm);
+}
+.scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
 /* Messages */
 .error {
   color: var(--color-danger);

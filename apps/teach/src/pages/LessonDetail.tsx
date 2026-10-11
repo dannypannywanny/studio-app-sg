@@ -1,9 +1,10 @@
 import { collection, query } from 'firebase/firestore';
 import { useState } from 'react';
-import { Link, useParams } from 'react-router';
-import { resolvePolicy, type AttendanceStatus } from '@lessonkaki/shared';
+import { Link, useNavigate, useParams } from 'react-router';
+import { WEEKDAYS, resolvePolicy, wallDateOf, wallTimeOf, type AttendanceStatus, type Weekday } from '@lessonkaki/shared';
+import { DAY_LABEL } from '../components/LessonForm';
 import { call, db } from '../firebase';
-import { studentName, useDoc, useFormatTs, useQuery, useSchool, useStudents, useTeachers } from '../hooks';
+import { studentName, useDoc, useFormatTs, useQuery, useSchool, useStudents, useTeachers, useTimeZone } from '../hooks';
 import { useSchoolId } from '../session';
 import type { Attendee, Lesson } from '../types';
 
@@ -22,6 +23,152 @@ const removeAttendee = call<AttendeeRef, { charge: string }>('removeAttendee');
 const cancelLesson = call<{ schoolId: string; lessonId: string; reason: string | null }, { restored: number }>(
   'cancelLesson',
 );
+
+type Scope = 'one' | 'following' | 'all';
+interface EditResult {
+  updated: number;
+  created: number;
+  deleted: number;
+  cancelled: number;
+  restored: number;
+  skipped: string[];
+  seriesId: string | null;
+}
+const editLesson = call<
+  {
+    schoolId: string;
+    lessonId: string;
+    scope: Scope;
+    changes?: { date?: string; time?: string; durationMin?: number; teacherId?: string; byDay?: Weekday[] };
+    cancel?: { reason: string | null };
+    skipConflicts?: boolean;
+  },
+  EditResult
+>('editLesson');
+
+const SCOPE_LABEL: Record<Scope, string> = {
+  one: 'This lesson only',
+  following: 'This and following lessons',
+  all: 'All upcoming lessons in the series',
+};
+
+function ScopePicker({ value, onChange }: { value: Scope; onChange: (s: Scope) => void }) {
+  return (
+    <fieldset className="field">
+      <legend>Apply to</legend>
+      <div className="scope">
+        {(Object.keys(SCOPE_LABEL) as Scope[]).map((s) => (
+          <label key={s} className="row">
+            <input type="radio" name="scope" checked={value === s} onChange={() => onChange(s)} />
+            {SCOPE_LABEL[s]}
+          </label>
+        ))}
+      </div>
+      {value !== 'one' && (
+        <span className="muted">Past lessons, marked lessons and lessons you changed one by one are left as they are.</span>
+      )}
+    </fieldset>
+  );
+}
+
+/** Reschedule one lesson, or a series from this lesson on. */
+function Reschedule({ lesson, onDone }: { lesson: Lesson & { id: string }; onDone: (msg: string, moved: boolean) => void }) {
+  const schoolId = useSchoolId();
+  const tz = useTimeZone();
+  const teachers = useTeachers();
+  const series = useDoc<{ byDay: Weekday[] }>(lesson.seriesId ? `schools/${schoolId}/series/${lesson.seriesId}` : null);
+  const start = lesson.startAt.toDate();
+  const [scope, setScope] = useState<Scope>('one');
+  const [date, setDate] = useState(wallDateOf(start, tz));
+  const [time, setTime] = useState(wallTimeOf(start, tz));
+  const [durationMin, setDuration] = useState(lesson.durationMin);
+  const [teacherId, setTeacherId] = useState(lesson.teacherId);
+  const [byDay, setByDay] = useState<Weekday[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const days = byDay ?? series.data?.byDay ?? [];
+
+  async function save(skipConflicts = false) {
+    setBusy(true);
+    setError(null);
+    try {
+      const changes =
+        scope === 'one'
+          ? { date, time, durationMin, teacherId }
+          : { time, durationMin, teacherId, ...(byDay ? { byDay } : {}) };
+      const res = await editLesson({ schoolId, lessonId: lesson.id, scope, changes, skipConflicts });
+      onDone(
+        scope === 'one'
+          ? 'Lesson moved.'
+          : `Series updated: ${res.created} lessons rescheduled${res.skipped.length ? `, ${res.skipped.length} clashing dates left out` : ''}.`,
+        scope !== 'one',
+      );
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card stack">
+      <h2>Reschedule</h2>
+      {lesson.seriesId && <ScopePicker value={scope} onChange={setScope} />}
+      <div className="form-grid">
+        {scope === 'one' ? (
+          <label className="field">
+            <span>Date</span>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </label>
+        ) : (
+          <fieldset className="field span-all">
+            <legend>Weekdays</legend>
+            <div className="chips">
+              {WEEKDAYS.map((d) => (
+                <label key={d} className={`chip ${days.includes(d) ? 'on' : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={days.includes(d)}
+                    onChange={() => setByDay(days.includes(d) ? days.filter((x) => x !== d) : WEEKDAYS.filter((x) => x === d || days.includes(x)))}
+                  />
+                  {DAY_LABEL[d]}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        )}
+        <label className="field">
+          <span>Start ({tz})</span>
+          <input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+        </label>
+        <label className="field">
+          <span>Minutes</span>
+          <input type="number" min={5} max={720} step={5} value={durationMin} onChange={(e) => setDuration(Number(e.target.value))} />
+        </label>
+        <label className="field">
+          <span>Teacher</span>
+          <select value={teacherId} onChange={(e) => setTeacherId(e.target.value)}>
+            {teachers.data.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.displayName}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="row">
+        <button className="btn btn-primary" disabled={busy} onClick={() => void save()}>
+          {busy ? 'Saving…' : 'Save'}
+        </button>
+        {error && /already has a lesson/.test(error) && scope !== 'one' && (
+          <button className="btn btn-sm" disabled={busy} onClick={() => void save(true)}>
+            Save anyway, leaving out clashing dates
+          </button>
+        )}
+        {error && <p className="error">{error}</p>}
+      </div>
+    </div>
+  );
+}
 
 const CHARGE_TEXT: Record<string, string> = {
   debited: '1 credit used.',
@@ -102,6 +249,9 @@ export function LessonDetail() {
   const [adding, setAdding] = useState('');
   const [confirmCancelLesson, setConfirmCancelLesson] = useState(false);
   const [reason, setReason] = useState('');
+  const [cancelScope, setCancelScope] = useState<Scope>('one');
+  const [rescheduling, setRescheduling] = useState(false);
+  const navigate = useNavigate();
 
   async function run(key: string, fn: () => Promise<string | null>) {
     setBusy(key);
@@ -145,9 +295,15 @@ export function LessonDetail() {
 
   const cancelWholeLesson = () =>
     run('cancelLesson', async () => {
-      const res = await cancelLesson({ schoolId, lessonId, reason: reason.trim() || null });
+      const why = reason.trim() || null;
       setConfirmCancelLesson(false);
-      return `Lesson cancelled. ${res.restored} credit${res.restored === 1 ? '' : 's'} returned.`;
+      if (cancelScope === 'one') {
+        const res = await cancelLesson({ schoolId, lessonId, reason: why });
+        return `Lesson cancelled. ${res.restored} credit${res.restored === 1 ? '' : 's'} returned.`;
+      }
+      const res = await editLesson({ schoolId, lessonId, scope: cancelScope, cancel: { reason: why } });
+      navigate('/calendar');
+      return `Series ended: ${res.deleted + res.cancelled} upcoming lessons removed, ${res.restored} credits returned.`;
     });
 
   if (lesson.loading) return <p className="muted">Loading…</p>;
@@ -179,25 +335,44 @@ export function LessonDetail() {
         {cancelled ? (
           <span className="badge badge-void">Cancelled{l.cancelReason ? `: ${l.cancelReason}` : ''}</span>
         ) : (
-          !confirmCancelLesson && (
-            <button className="btn" onClick={() => setConfirmCancelLesson(true)}>
-              Cancel lesson
-            </button>
-          )
+          <div className="row">
+            {!rescheduling && (
+              <button className="btn" onClick={() => setRescheduling(true)}>
+                Reschedule
+              </button>
+            )}
+            {!confirmCancelLesson && (
+              <button className="btn" onClick={() => setConfirmCancelLesson(true)}>
+                Cancel lesson
+              </button>
+            )}
+          </div>
         )}
       </div>
+
+      {rescheduling && !cancelled && (
+        <Reschedule
+          lesson={l}
+          onDone={(msg, moved) => {
+            setRescheduling(false);
+            setNotice(msg);
+            if (moved) navigate('/calendar');
+          }}
+        />
+      )}
 
       {confirmCancelLesson && !cancelled && (
         <div className="card stack">
           <h2>Cancel this lesson?</h2>
           <p className="muted">Every student who was charged for it gets the credit back. Owed lessons are cleared.</p>
+          {l.seriesId && <ScopePicker value={cancelScope} onChange={setCancelScope} />}
           <label className="field">
             <span>Reason (optional, shown on the lesson)</span>
             <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300} />
           </label>
           <div className="row">
             <button className="btn btn-primary" disabled={busy !== null} onClick={cancelWholeLesson}>
-              {busy === 'cancelLesson' ? 'Cancelling…' : 'Cancel lesson'}
+              {busy === 'cancelLesson' ? 'Cancelling…' : cancelScope === 'one' ? 'Cancel lesson' : 'End the series'}
             </button>
             <button className="btn btn-ghost" onClick={() => setConfirmCancelLesson(false)}>
               Keep it

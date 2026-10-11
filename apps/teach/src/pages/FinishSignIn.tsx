@@ -17,7 +17,7 @@ export function FinishSignIn() {
     try {
       await signInWithEmailLink(auth, withEmail, href);
       window.localStorage.removeItem(EMAIL_KEY);
-      navigate('/students', { replace: true });
+      navigate('/', { replace: true });
     } catch (err) {
       setError((err as Error).message);
     }

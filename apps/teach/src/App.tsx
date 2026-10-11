@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router';
 import { Layout } from './Layout';
+import { Calendar } from './pages/Calendar';
 import { FinishSignIn } from './pages/FinishSignIn';
 import { LessonDetail } from './pages/LessonDetail';
 import { Lessons } from './pages/Lessons';
@@ -45,7 +46,8 @@ export function App() {
               </RequireStaff>
             }
           >
-            <Route index element={<Navigate to="/students" replace />} />
+            <Route index element={<Navigate to="/calendar" replace />} />
+            <Route path="calendar" element={<Calendar />} />
             <Route path="students" element={<Students />} />
             <Route path="students/:studentId" element={<StudentDetail />} />
             <Route path="lessons" element={<Lessons />} />

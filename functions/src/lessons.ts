@@ -1,9 +1,108 @@
-import { Timestamp, type Firestore } from 'firebase-admin/firestore';
+import { Timestamp, type DocumentReference, type DocumentSnapshot, type Firestore, type Query } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
+import { newAttendeeDoc } from './attendance';
 import { audit, notFound, now, readAll, schoolRef, type Actor } from './db';
 
 /** Longest lesson we accept; also bounds the conflict query window. */
 export const MAX_DURATION_MIN = 12 * 60;
+const MIN_MS = 60_000;
+
+/** A teacher's lessons that could overlap anything in [fromMs, toMs). */
+export function teacherWindow(school: DocumentReference, teacherId: string, fromMs: number, toMs: number): Query {
+  return school
+    .collection('lessons')
+    .where('teacherId', '==', teacherId)
+    .where('startAt', '>', Timestamp.fromMillis(fromMs - MAX_DURATION_MIN * MIN_MS))
+    .where('startAt', '<', Timestamp.fromMillis(toMs));
+}
+
+/** The first scheduled lesson overlapping [start, end), ignoring the ids in `ignore`. */
+export function findClash(
+  lessons: DocumentSnapshot[],
+  startMs: number,
+  endMs: number,
+  ignore: ReadonlySet<string> = new Set(),
+): DocumentSnapshot | undefined {
+  return lessons.find(
+    (d) =>
+      !ignore.has(d.id) &&
+      d.get('status') !== 'cancelled' &&
+      (d.get('startAt') as Timestamp).toMillis() < endMs &&
+      (d.get('endAt') as Timestamp).toMillis() > startMs,
+  );
+}
+
+export interface LessonShape {
+  teacherId: string;
+  subjectId: string;
+  locationId?: string | null;
+  isOnline: boolean;
+  meetingUrl?: string | null;
+  durationMin: number;
+}
+
+/** Writes a new scheduled lesson and its booked attendees. */
+export function writeLesson(
+  tx: FirebaseFirestore.Transaction,
+  ref: DocumentReference,
+  schoolId: string,
+  shape: LessonShape,
+  startMs: number,
+  studentIds: string[],
+  actor: Actor,
+  series: { seriesId: string; occurrenceDate: string } | null = null,
+  /** Replace a doc being rewritten in the same transaction (a series edit) instead of creating it. */
+  overwrite = false,
+): void {
+  const startTs = Timestamp.fromMillis(startMs);
+  const put = (r: DocumentReference, data: FirebaseFirestore.DocumentData) => (overwrite ? tx.set(r, data) : tx.create(r, data));
+  put(ref, {
+    teacherId: shape.teacherId,
+    subjectId: shape.subjectId,
+    locationId: shape.locationId ?? null,
+    isOnline: shape.isOnline,
+    meetingUrl: shape.meetingUrl ?? null,
+    startAt: startTs,
+    endAt: Timestamp.fromMillis(startMs + shape.durationMin * MIN_MS),
+    durationMin: shape.durationMin,
+    seriesId: series?.seriesId ?? null,
+    occurrenceDate: series?.occurrenceDate ?? null,
+    isException: false,
+    status: 'scheduled',
+    capacity: Math.max(1, studentIds.length),
+    studentIds,
+    attendanceState: 'unmarked',
+    createdBy: actor.uid,
+    createdAt: now(),
+    updatedAt: now(),
+  });
+  for (const studentId of studentIds) {
+    put(ref.collection('attendees').doc(studentId), newAttendeeDoc(schoolId, ref.id, studentId, startTs));
+  }
+}
+
+/** Reads and checks the teacher, subject and students a lesson or series refers to. */
+export async function checkRefs(
+  tx: FirebaseFirestore.Transaction,
+  school: DocumentReference,
+  refs: { teacherId: string; subjectId: string; studentIds: string[] },
+): Promise<DocumentSnapshot> {
+  const [schoolSnap, teacherSnap, subjectSnap, ...studentSnaps] = await readAll(
+    tx,
+    school,
+    school.collection('teachers').doc(refs.teacherId),
+    school.collection('subjects').doc(refs.subjectId),
+    ...refs.studentIds.map((id) => school.collection('students').doc(id)),
+  );
+  if (!schoolSnap.exists) notFound('School');
+  if (!teacherSnap.exists || teacherSnap.get('active') === false) notFound('Teacher');
+  if (!subjectSnap.exists) notFound('Subject');
+  for (const s of studentSnaps) {
+    if (!s.exists) notFound(`Student ${s.id}`);
+    if (s.get('status') === 'archived') throw new HttpsError('failed-precondition', `Student ${s.id} is archived`);
+  }
+  return schoolSnap;
+}
 
 export interface CreateLessonInput {
   schoolId: string;
@@ -32,32 +131,11 @@ export async function createLesson(db: Firestore, input: CreateLessonInput, acto
   const end = start + input.durationMin * 60_000;
 
   return db.runTransaction(async (tx) => {
-    const [schoolSnap, teacherSnap, subjectSnap, ...studentSnaps] = await readAll(
-      tx,
-      school,
-      school.collection('teachers').doc(input.teacherId),
-      school.collection('subjects').doc(input.subjectId),
-      ...studentIds.map((id) => school.collection('students').doc(id)),
-    );
-    if (!schoolSnap.exists) notFound('School');
-    if (!teacherSnap.exists || teacherSnap.get('active') === false) notFound('Teacher');
-    if (!subjectSnap.exists) notFound('Subject');
-    for (const s of studentSnaps) {
-      if (!s.exists) notFound(`Student ${s.id}`);
-      if (s.get('status') === 'archived') throw new HttpsError('failed-precondition', `Student ${s.id} is archived`);
-    }
+    await checkRefs(tx, school, { teacherId: input.teacherId, subjectId: input.subjectId, studentIds });
 
     // Teacher conflict: any scheduled lesson for this teacher overlapping [start, end).
-    const nearby = await tx.get(
-      school
-        .collection('lessons')
-        .where('teacherId', '==', input.teacherId)
-        .where('startAt', '>', Timestamp.fromMillis(start - MAX_DURATION_MIN * 60_000))
-        .where('startAt', '<', Timestamp.fromMillis(end)),
-    );
-    const clash = nearby.docs.find(
-      (d) => d.get('status') !== 'cancelled' && (d.get('endAt') as Timestamp).toMillis() > start,
-    );
+    const nearby = await tx.get(teacherWindow(school, input.teacherId, start, end));
+    const clash = findClash(nearby.docs, start, end);
     if (clash) {
       throw new HttpsError('already-exists', 'This teacher already has a lesson at that time', {
         conflictLessonId: clash.id,
@@ -65,44 +143,7 @@ export async function createLesson(db: Firestore, input: CreateLessonInput, acto
     }
 
     const lessonRef = school.collection('lessons').doc();
-    const startTs = Timestamp.fromMillis(start);
-    tx.create(lessonRef, {
-      teacherId: input.teacherId,
-      subjectId: input.subjectId,
-      locationId: input.locationId ?? null,
-      isOnline: input.isOnline,
-      meetingUrl: input.meetingUrl ?? null,
-      startAt: startTs,
-      endAt: Timestamp.fromMillis(end),
-      durationMin: input.durationMin,
-      seriesId: null,
-      isException: false,
-      status: 'scheduled',
-      capacity: Math.max(1, studentIds.length),
-      studentIds,
-      attendanceState: 'unmarked',
-      createdBy: actor.uid,
-      createdAt: now(),
-      updatedAt: now(),
-    });
-    for (const studentId of studentIds) {
-      tx.create(lessonRef.collection('attendees').doc(studentId), {
-        schoolId: input.schoolId,
-        lessonId: lessonRef.id,
-        studentId,
-        lessonStartAt: startTs,
-        status: 'booked',
-        owed: false,
-        enrolmentId: null,
-        ledgerEntryId: null,
-        rev: 0,
-        source: 'admin',
-        markedBy: null,
-        markedAt: null,
-        createdAt: now(),
-        updatedAt: now(),
-      });
-    }
+    writeLesson(tx, lessonRef, input.schoolId, input, start, studentIds, actor);
     audit(tx, school, actor, 'createLesson', `lessons/${lessonRef.id}`, { teacherId: input.teacherId, studentIds });
     return { lessonId: lessonRef.id };
   });

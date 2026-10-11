@@ -21,7 +21,7 @@ export function SignIn() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (ready && user) return <Navigate to="/students" replace />;
+  if (ready && user) return <Navigate to="/" replace />;
 
   async function submit(e: FormEvent) {
     e.preventDefault();

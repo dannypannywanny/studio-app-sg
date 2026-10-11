@@ -16,6 +16,7 @@ export function Layout() {
           <span className="brand-name">{school?.name ?? 'LessonKaki'}</span>
         </div>
         <nav className="nav">
+          <NavLink to="/calendar">Calendar</NavLink>
           <NavLink to="/students">Students</NavLink>
           <NavLink to="/lessons">Lessons</NavLink>
         </nav>
