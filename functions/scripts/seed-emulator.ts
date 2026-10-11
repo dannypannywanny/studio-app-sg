@@ -29,7 +29,10 @@ async function main() {
   batch.set(school, {
     name: 'Sing Your Way Home',
     legalName: 'Demo School Pte. Ltd.',
-    uen: null,
+    // Synthetic UEN (a 2099 entity number, so it can't belong to anyone): lets demo invoices carry a PayNow QR.
+    uen: 'T99LL9999Z',
+    paynowName: 'Demo School',
+    email: 'hello@lessonkaki.test',
     timezone: 'Asia/Singapore',
     currency: 'SGD',
     hosts: { teach: 'localhost:5173', learn: null },
@@ -100,7 +103,7 @@ async function main() {
 
   console.log(`Seeded school "${SCHOOL_ID}" in ${projectId}.`);
   console.log(`Owner ${OWNER_EMAIL} (uid ${uid}) claims: ${JSON.stringify(claims)}`);
-  console.log('Sign in at http://localhost:5173 (pnpm dev:teach).');
+  console.log('Sign in with pnpm dev:teach (http://localhost:5173).');
 }
 
 main().catch((err) => {

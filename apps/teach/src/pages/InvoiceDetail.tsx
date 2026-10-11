@@ -1,5 +1,6 @@
 // S09 Invoice detail + S10 record-payment modal.
 import { collection, query, where } from 'firebase/firestore';
+import QRCode from 'qrcode';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router';
 import { centsToDecimal, formatDate, formatMoney, parseMoney, wallClockToUtc, wallDateOf } from '@lessonkaki/shared';
@@ -33,6 +34,74 @@ const voidInvoice = call<
   { schoolId: string; invoiceId: string; reason: string; keepCredits: boolean },
   { status: string; creditsRemoved: number }
 >('voidInvoice');
+
+const getInvoicePdfUrl = call<{ schoolId: string; invoiceId: string }, { url: string; expiresAt: string }>(
+  'getInvoicePdfUrl',
+);
+
+/** The PayNow QR for what's outstanding, drawn from the payload the PDF function saved on the invoice. */
+function PayNowPanel({ invoice }: { invoice: Invoice }) {
+  const [svg, setSvg] = useState<string | null>(null);
+  const payload = invoice.paynow?.payload;
+  useEffect(() => {
+    if (!payload) return setSvg(null);
+    let live = true;
+    QRCode.toString(payload, { type: 'svg', errorCorrectionLevel: 'M', margin: 4 }).then((s) => live && setSvg(s));
+    return () => {
+      live = false;
+    };
+  }, [payload]);
+  if (!invoice.paynow || !svg) return null;
+  return (
+    <div className="card paynow">
+      <div className="paynow-qr" role="img" aria-label="PayNow QR code" dangerouslySetInnerHTML={{ __html: svg }} />
+      <div className="stack">
+        <h2>Pay by PayNow</h2>
+        <p className="muted">Scan with a banking app. Amount and reference fill in automatically.</p>
+        <p>
+          Amount <strong>{formatMoney(invoice.paynow.amountCents, invoice.currency)}</strong> · Reference{' '}
+          <strong>{invoice.paynow.reference}</strong>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function PdfButton({ invoiceId, number }: { invoiceId: string; number: string }) {
+  const schoolId = useSchoolId();
+  const [busy, setBusy] = useState(false);
+  const [link, setLink] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  async function prepare() {
+    setBusy(true);
+    setError(null);
+    try {
+      const { url } = await getInvoicePdfUrl({ schoolId, invoiceId });
+      setLink(url);
+      // Signed links expire after 15 minutes; ask for a fresh one after that.
+      window.setTimeout(() => setLink(null), 14 * 60_000);
+      window.open(url, '_blank', 'noopener');
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <>
+      {link ? (
+        <a className="btn" href={link} target="_blank" rel="noopener" download={`${number}.pdf`}>
+          Open {number}.pdf
+        </a>
+      ) : (
+        <button className="btn" disabled={busy} onClick={prepare}>
+          {busy ? 'Preparing PDF…' : 'Download PDF'}
+        </button>
+      )}
+      {error && <span className="error">{error}</span>}
+    </>
+  );
+}
 
 export const METHOD_LABEL: Record<Payment['method'], string> = {
   paynow: 'PayNow',
@@ -225,18 +294,19 @@ export function InvoiceDetail() {
             {inv.status === 'void' && inv.voidReason ? ` · void: ${inv.voidReason}` : ''}
           </p>
         </div>
-        {open && (
-          <div className="row">
+        <div className="row">
+          <PdfButton invoiceId={inv.id} number={inv.number} />
+          {open && (
             <button className="btn btn-primary" onClick={() => setPaying(true)}>
               Record payment
             </button>
-            {inv.paidCents === 0 && !voiding && (
-              <button className="btn" onClick={() => setVoiding(true)}>
-                Void
-              </button>
-            )}
-          </div>
-        )}
+          )}
+          {open && inv.paidCents === 0 && !voiding && (
+            <button className="btn" onClick={() => setVoiding(true)}>
+              Void
+            </button>
+          )}
+        </div>
       </div>
       {notice && (
         <p className="success" role="status">
@@ -260,6 +330,8 @@ export function InvoiceDetail() {
           </span>
         </div>
       </div>
+
+      {open && <PayNowPanel invoice={inv} />}
 
       <div className="card stack">
         <h2>Items</h2>

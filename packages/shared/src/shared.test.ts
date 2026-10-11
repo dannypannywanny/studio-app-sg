@@ -16,6 +16,7 @@ import {
   weekdayOf,
   weeklyOccurrences,
 } from './index';
+import { buildPayNowPayload, crc16, hasValidCrc, parseTlv, withCrc } from './paynow';
 
 describe('consumesCredit', () => {
   it('present always uses a credit, booked never does', () => {
@@ -122,5 +123,60 @@ describe('money input', () => {
     expect(isOverdue({ status: 'partial', dueDate: due }, at)).toBe(true);
     expect(isOverdue({ status: 'paid', dueDate: due }, at)).toBe(false);
     expect(isOverdue({ status: 'sent', dueDate: due }, new Date('2026-09-30T00:00:00Z'))).toBe(false);
+  });
+});
+
+describe('PayNow / EMVCo payload', () => {
+  it('CRC-16/CCITT-FALSE matches the standard check value', () => {
+    expect(crc16('123456789')).toBe('29B1');
+  });
+
+  it('reproduces the EMVCo MPM specification sample, CRC A13A', () => {
+    // The sample payload from the EMV QRCPS Merchant-Presented Mode spec (includes multi-byte characters).
+    const body =
+      '00020101021229300012D156000000000510A93FO3230Q31280012D15600000001030812345678520441115802CN' +
+      '5914BEST TRANSPORT6007BEIJING64200002ZH0104最佳运输0202北京540523.7253031565502016233030412340603***' +
+      '0708A60086670902ME91320016A011223344998877070812345678';
+    const payload = withCrc(body);
+    expect(payload.slice(-8)).toBe('6304A13A');
+    expect(hasValidCrc(payload)).toBe(true);
+    const fields = new Map(parseTlv(payload));
+    expect(fields.get('59')).toBe('BEST TRANSPORT');
+    expect(new Map(parseTlv(fields.get('64')!)).get('01')).toBe('最佳运输');
+  });
+
+  it('builds a PayNow payload to a UEN with amount and invoice number', () => {
+    const payload = buildPayNowPayload({
+      uen: '201403121w',
+      amountCents: 12050,
+      reference: 'INV-00042',
+      merchantName: 'Sing Your Way Home',
+    });
+    const body =
+      '000201' + '010212' +
+      '2637' + '0009SG.PAYNOW' + '01012' + '0210201403121W' + '03010' +
+      '52040000' + '5303702' + '5406120.50' + '5802SG' + '5918Sing Your Way Home' + '6009Singapore' +
+      '6213' + '0109INV-00042' + '6304';
+    expect(payload).toBe(body + crc16(body));
+    expect(hasValidCrc(payload)).toBe(true);
+    const fields = new Map(parseTlv(payload));
+    expect(new Map(parseTlv(fields.get('26')!))).toEqual(
+      new Map([['00', 'SG.PAYNOW'], ['01', '2'], ['02', '201403121W'], ['03', '0']]),
+    );
+  });
+
+  it('adds an expiry, trims long names, and rejects bad input', () => {
+    const p = buildPayNowPayload({
+      uen: '201403121W',
+      amountCents: 100,
+      reference: 'INV-1',
+      merchantName: 'A very long studio name that goes on',
+      expiry: '2026-12-31',
+    });
+    const fields = new Map(parseTlv(p));
+    expect(new Map(parseTlv(fields.get('26')!)).get('04')).toBe('20261231');
+    expect(fields.get('59')).toHaveLength(25);
+    expect(() => buildPayNowPayload({ uen: 'nope', amountCents: 100, reference: 'x', merchantName: 'x' })).toThrow(/UEN/);
+    expect(() => buildPayNowPayload({ uen: '201403121W', amountCents: 0, reference: 'x', merchantName: 'x' })).toThrow();
   });
 });

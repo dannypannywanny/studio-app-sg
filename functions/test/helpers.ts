@@ -11,7 +11,7 @@ import { reconcileStudent } from '../src/reconcile';
 if (!process.env.FIRESTORE_EMULATOR_HOST) {
   throw new Error('Tests run against the Firestore emulator only. Use `pnpm test` (firebase emulators:exec).');
 }
-if (!getApps().length) initializeApp({ projectId: 'demo-lessonkaki' });
+if (!getApps().length) initializeApp({ projectId: 'demo-lessonkaki', storageBucket: 'demo-lessonkaki.appspot.com' });
 
 export const db = getFirestore();
 export const owner: Actor = { uid: 'owner-uid', role: 'owner' };

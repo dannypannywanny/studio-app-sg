@@ -3,15 +3,18 @@
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getStorage } from 'firebase-admin/storage';
 import { setGlobalOptions } from 'firebase-functions/v2';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { z } from 'zod';
 import { ROLES, WEEKDAYS, isWallDate, isWallTime } from '@lessonkaki/shared';
 import { requireRole } from './auth';
 import * as attendance from './attendance';
 import * as credits from './credits';
 import * as lessons from './lessons';
+import * as invoicePdf from './invoicePdf';
 import * as members from './members';
 import * as money from './money';
 import * as series from './series';
@@ -20,6 +23,7 @@ initializeApp();
 setGlobalOptions({ region: 'asia-southeast1', maxInstances: 10 });
 
 const db = () => getFirestore();
+const bucket = () => getStorage().bucket() as unknown as invoicePdf.PdfBucket;
 
 const id = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
 const wallDate = z.string().refine(isWallDate, 'Expected a date like 2026-10-14');
@@ -227,4 +231,22 @@ export const voidInvoice = onCall(async (req) => {
 export const markOverdue = onSchedule({ ...JOB, schedule: 'every day 08:00' }, async () => {
   const res = await money.markOverdueAll(db());
   console.log(`markOverdue: ${res.flagged} invoices flagged`);
+});
+
+/** Keeps each invoice's PDF (and PayNow payload) current. Skips when nothing printable changed. */
+export const onInvoiceWritten = onDocumentWritten(
+  { document: 'schools/{schoolId}/invoices/{invoiceId}', region: 'asia-southeast1' },
+  async (event) => {
+    if (!event.data?.after.exists) return;
+    const { schoolId, invoiceId } = event.params;
+    await invoicePdf.renderAndStoreInvoicePdf(db(), bucket(), schoolId, invoiceId);
+  },
+);
+
+const InvoiceRef = z.object({ schoolId: id, invoiceId: id });
+
+export const getInvoicePdfUrl = onCall(async (req) => {
+  const input = parse(InvoiceRef, req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin', 'student']);
+  return invoicePdf.invoicePdfUrl(db(), bucket(), input, actor);
 });
