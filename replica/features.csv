@@ -1,0 +1,52 @@
+feature,area,priority,original,clone,notes
+Email-link sign-in for staff and students,auth,must,yes,no,MFA for staff
+Roles owner / admin / teacher / student per school,auth,must,yes,no,custom claims
+Student list with search and filters (active / overdue / joined),students,must,yes,no,
+Student profile with contact and notes,students,must,yes,no,
+Student create / edit,students,must,yes,no,
+Import students from CSV with duplicate detection,students,must,partial,no,migration; legacyId kept
+Calendar day and week view per teacher and location,calendar,must,yes,no,
+Create single lesson,calendar,must,yes,no,teacherId on every lesson
+Recurring lessons (edit one vs all),calendar,must,yes,no,
+Online flag and location per lesson,calendar,must,yes,no,
+Attach students to a lesson,calendar,must,yes,no,attendee link not exposed by API; confirm in UI
+Mark attendance present / absent,attendance,must,yes,no,
+Attendance report per student by period,attendance,must,yes,no,at-risk list
+Packages catalogue with fee and session count,packages,must,yes,no,session count is a new explicit field
+Sell a package to a student,packages,must,yes,no,creates invoice
+Credit ledger (append-only) with balance,credits,must,yes,no,balance not exposed by Classcard
+Credit deducted on attendance,credits,must,yes,no,rules for late cancel to confirm
+Credit expiry / validity date,credits,should,partial,no,validity_date field exists
+Invoice create with discount and due date,invoicing,must,yes,no,
+Invoice PDF with PayNow QR,invoicing,must,yes,no,original layout
+Invoice statuses (Draft Sent Paid Overdue Void),invoicing,must,yes,no,
+Record payment (Cash PayNow Card) incl. partial,payments,must,yes,no,
+Refund and credit note,payments,should,yes,no,
+Overdue invoice list and reminder,invoicing,should,yes,no,
+HitPay card payment,payments,should,yes,no,phase 2
+Outstanding payments and revenue summary,reports,should,yes,no,
+Student portal: upcoming lessons,portal,must,yes,no,phase 2
+Student portal: credits remaining,portal,must,yes,no,
+Student portal: invoices and pay,portal,must,yes,no,
+Student reschedule or cancel with cutoff,portal,should,yes,no,
+Public booking page (package or trial or one-on-one),booking,must,yes,no,phase 3; ~100 of 270 students came this way
+Availability rules per teacher,booking,must,yes,no,
+Time zone handling on booking,booking,should,yes,no,
+Free trial limited once per person,booking,should,yes,no,
+Pay at booking,booking,should,yes,no,
+Email reminders before lessons,notifications,should,yes,no,scheduled function
+Booking confirmation emails,notifications,must,yes,no,
+Teacher scoped login and own calendar,teachers,must,yes,no,phase 4
+Teacher pay tracking,teachers,should,partial,no,phase 4
+Subjects / programs per teacher,settings,should,yes,no,
+Locations and rooms,settings,should,yes,no,
+Per-school config (hostnames branding gateway),settings,must,no,no,new: multi-school
+PDPA consent and data export / delete,compliance,must,no,no,new: selling point
+Guardian / child accounts,students,could,yes,skip,adult studio; revisit for schools
+Batches / class groups,calendar,could,yes,skip,empty for this studio
+Leads and CRM pipeline,leads,could,yes,skip,revisit when selling
+Products and stock,products,could,yes,skip,not used
+Room rentals,locations,could,yes,skip,not used yet
+Classcard marketplace and partner integrations,integrations,could,yes,skip,their network is not rebuildable
+Native mobile apps,platform,could,yes,no,web first
+Parent / school-year / curriculum fields,students,could,yes,skip,not relevant

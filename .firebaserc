@@ -1,0 +1,13 @@
+{
+  "projects": {
+    "default": "class-app-sg"
+  },
+  "targets": {
+    "class-app-sg": {
+      "hosting": {
+        "teach": ["class-app-sg-teach"],
+        "learn": ["class-app-sg-learn"]
+      }
+    }
+  }
+}

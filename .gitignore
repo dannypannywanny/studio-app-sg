@@ -1,0 +1,20 @@
+node_modules/
+dist/
+functions/lib/
+coverage/
+.firebase/
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Secrets
+serviceAccountKey*.json
+*-service-account*.json
+
+# Student data never goes in git (PDPA). Exports, staging and raw migration pulls stay local.
+*.csv
+!replica/features.csv
+data/
+migration/raw/

@@ -1,0 +1,20 @@
+{
+  "name": "lessonkaki",
+  "private": true,
+  "packageManager": "pnpm@11.11.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "build:functions": "pnpm --filter functions build",
+    "emulators": "pnpm --filter functions build && sh scripts/with-java21.sh firebase emulators:start --project demo-lessonkaki --only auth,firestore,functions",
+    "seed": "pnpm --filter functions seed",
+    "dev:teach": "pnpm --filter teach dev",
+    "build:teach": "pnpm --filter teach build"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3"
+  }
+}

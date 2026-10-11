@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "paths": {
+      "@lessonkaki/shared": ["../packages/shared/src/index.ts"]
+    }
+  },
+  "include": ["src", "test", "scripts", "vitest.config.mts"]
+}

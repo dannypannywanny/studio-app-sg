@@ -1,0 +1,104 @@
+rules_version = '2';
+
+// DRAFT for LessonKaki. Copy to the repo root when scaffolding and cover with emulator tests.
+// Claims: { r: { [schoolId]: role }, t: { [schoolId]: teacherId }, s: { [schoolId]: studentId } }
+// Money and credit collections are written only by Cloud Functions (Admin SDK bypasses rules).
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function role(s) { return signedIn() && request.auth.token.r != null ? request.auth.token.r[s] : null; }
+    function isStaff(s) { return role(s) in ['owner', 'admin']; }
+    function isOwner(s) { return role(s) == 'owner'; }
+    function myTeacher(s) { return role(s) == 'teacher' ? request.auth.token.t[s] : null; }
+    function myStudent(s) { return role(s) == 'student' ? request.auth.token.s[s] : null; }
+    function untouched(fields) { return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields); }
+
+    match /publicSchools/{host} { allow read: if true; allow write: if false; }
+
+    match /schools/{s} {
+      allow read: if role(s) != null;
+      allow update: if isOwner(s) && untouched(['gateways']);
+      allow create, delete: if false;
+
+      match /public/{doc} { allow read: if true; allow write: if isStaff(s); }
+
+      match /members/{uid} {
+        allow read: if isStaff(s) || (signedIn() && request.auth.uid == uid);
+        allow write: if false; // setMemberRole function
+      }
+
+      match /teachers/{id} {
+        allow read: if isStaff(s) || myTeacher(s) == id;
+        allow write: if isStaff(s);
+      }
+
+      match /subjects/{id} { allow read: if role(s) != null; allow write: if isStaff(s); }
+      match /locations/{id} { allow read: if role(s) != null; allow write: if isStaff(s); }
+      match /packages/{id} { allow read: if role(s) != null; allow write: if isStaff(s); }
+
+      match /students/{id} {
+        allow read: if isStaff(s) || myStudent(s) == id;
+        allow create: if isStaff(s) && !('summary' in request.resource.data);
+        allow update: if isStaff(s) && untouched(['summary', 'uid']);
+        allow delete: if false; // deleteStudent function (PDPA)
+
+        match /private/{doc} { allow read, write: if isStaff(s); }
+      }
+
+      match /enrolments/{id} {
+        allow read: if isStaff(s) || resource.data.studentId == myStudent(s);
+        allow write: if false;
+      }
+      match /ledger/{id} {
+        allow read: if isStaff(s) || resource.data.studentId == myStudent(s);
+        allow write: if false;
+      }
+      match /moneyLedger/{id} {
+        allow read: if isStaff(s) || resource.data.studentId == myStudent(s);
+        allow write: if false;
+      }
+      match /invoices/{id} {
+        allow read: if isStaff(s) || resource.data.studentId == myStudent(s);
+        allow write: if false;
+      }
+      match /payments/{id} {
+        allow read: if isStaff(s) || resource.data.studentId == myStudent(s);
+        allow write: if false;
+      }
+      match /creditNotes/{id} {
+        allow read: if isStaff(s) || resource.data.studentId == myStudent(s);
+        allow write: if false;
+      }
+
+      match /series/{id} {
+        allow read: if isStaff(s) || resource.data.teacherId == myTeacher(s);
+        allow write: if false; // createSeries / editLesson functions
+      }
+
+      match /lessons/{id} {
+        allow read: if isStaff(s)
+          || resource.data.teacherId == myTeacher(s)
+          || (myStudent(s) != null && myStudent(s) in resource.data.studentIds);
+        allow write: if false; // scheduling goes through functions (conflicts, series, credits)
+
+        match /attendees/{studentId} {
+          allow read: if isStaff(s)
+            || get(/databases/$(database)/documents/schools/$(s)/lessons/$(id)).data.teacherId == myTeacher(s)
+            || studentId == myStudent(s);
+          allow write: if false; // markAttendance / cancelAttendance
+        }
+      }
+
+      match /availability/{teacherId} {
+        allow read: if role(s) != null;
+        allow write: if isStaff(s) || myTeacher(s) == teacherId;
+      }
+
+      match /bookings/{id} { allow read: if isStaff(s); allow write: if false; }
+      match /slotLocks/{id} { allow read, write: if false; }
+      match /counters/{id} { allow read, write: if false; }
+      match /auditLog/{id} { allow read: if isStaff(s); allow write: if false; }
+    }
+  }
+}
