@@ -13,5 +13,5 @@ export function requireRole(auth: AuthData, schoolId: string, allowed: readonly 
   if (!role || !allowed.includes(role)) {
     throw new HttpsError('permission-denied', 'You do not have access to do this');
   }
-  return { uid: auth.uid, role, teacherId: claims.t?.[schoolId] ?? null };
+  return { uid: auth.uid, role, teacherId: claims.t?.[schoolId] ?? null, studentId: claims.s?.[schoolId] ?? null };
 }

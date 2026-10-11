@@ -1,0 +1,223 @@
+import { describe, expect, it } from 'vitest';
+import {
+  addAttendee,
+  attendanceStateOf,
+  cancelAttendance,
+  cancelLesson,
+  removeAttendee,
+  setAttendance,
+  type CancelMode,
+  type MarkableStatus,
+} from '../src/attendance';
+import type { Actor } from '../src/db';
+import {
+  DAY,
+  addStudent,
+  attendee,
+  db,
+  ledger,
+  lesson,
+  lessonDoc,
+  lot,
+  owner,
+  sell,
+  summary,
+  withInvariant,
+  type TestSchool,
+} from './helpers';
+
+const HOUR = 3_600_000;
+const school = withInvariant();
+
+const mark = (t: TestSchool, lessonId: string, status: MarkableStatus, studentId = t.studentId) =>
+  setAttendance(db, { schoolId: t.schoolId, lessonId, studentId, status }, owner);
+
+const cancel = (t: TestSchool, lessonId: string, opts: { mode?: CancelMode; actor?: Actor; studentId?: string } = {}) =>
+  cancelAttendance(
+    db,
+    { schoolId: t.schoolId, lessonId, studentId: opts.studentId ?? t.studentId, mode: opts.mode },
+    opts.actor ?? owner,
+  );
+
+let slot = 0;
+/** A lesson `hours` from now; each call nudges the start by a few minutes so lessons never clash. */
+const lessonIn = (t: TestSchool, hours: number, studentIds?: string[]) =>
+  lesson(t, new Date(Date.now() + hours * HOUR + slot++ * 61 * 60_000), studentIds);
+
+describe('cancelAttendance', () => {
+  it('on time: cancelled, no credit moves', async () => {
+    const t = await school();
+    await sell(t, t.pkg30);
+    const id = await lessonIn(t, 72);
+    const res = await cancel(t, id);
+    expect(res).toEqual({ status: 'cancelled', late: false, charge: 'none' });
+    expect(await summary(t)).toEqual({ sessionsAvailable: 4, sessionsOwed: 0 });
+    expect(await attendee(t, id)).toMatchObject({ status: 'cancelled', ledgerEntryId: null });
+    expect((await lessonDoc(t, id)).attendanceState).toBe('marked');
+  });
+
+  it('inside lateCancelHours: lateCancelled, and the default policy keeps the credit with the student', async () => {
+    const t = await school();
+    await sell(t, t.pkg30);
+    const id = await lessonIn(t, 2);
+    const res = await cancel(t, id);
+    expect(res).toMatchObject({ status: 'lateCancelled', late: true, charge: 'none' });
+    expect(await summary(t)).toEqual({ sessionsAvailable: 4, sessionsOwed: 0 });
+  });
+
+  it('late cancel uses a credit when the policy says it does not return', async () => {
+    const t = await school({ lateCancelReturnsCredit: false });
+    const sale = await sell(t, t.pkg30);
+    const id = await lessonIn(t, 2);
+    const res = await cancel(t, id);
+    expect(res).toMatchObject({ status: 'lateCancelled', charge: 'debited' });
+    expect((await lot(t, sale.enrolmentId)).sessionsRemaining).toBe(3);
+    // An on-time cancel under the same policy uses nothing.
+    expect((await cancel(t, await lessonIn(t, 100))).charge).toBe('none');
+    expect(await summary(t)).toEqual({ sessionsAvailable: 3, sessionsOwed: 0 });
+  });
+
+  it('respects the school lateCancelHours', async () => {
+    const t = await school({ lateCancelHours: 48 });
+    expect((await cancel(t, await lessonIn(t, 30))).late).toBe(true);
+    expect((await cancel(t, await lessonIn(t, 60))).late).toBe(false);
+  });
+
+  it('a charged attendee who cancels gets the credit back on the same lot', async () => {
+    const t = await school();
+    const sale = await sell(t, t.pkg30);
+    const id = await lessonIn(t, 72);
+    await mark(t, id, 'present');
+    expect((await cancel(t, id)).charge).toBe('restored');
+    expect((await lot(t, sale.enrolmentId)).sessionsRemaining).toBe(4);
+    const restore = (await ledger(t)).find((e) => e.type === 'restore');
+    expect(restore).toMatchObject({ enrolmentId: sale.enrolmentId, lessonId: id, delta: 1 });
+  });
+
+  it('staff can override late/on-time; students cannot', async () => {
+    const t = await school({ lateCancelReturnsCredit: false });
+    await sell(t, t.pkg30);
+    const late = await lessonIn(t, 2);
+    expect(await cancel(t, late, { mode: 'onTime' })).toMatchObject({ status: 'cancelled', charge: 'none' });
+
+    const student: Actor = { uid: 'stu', role: 'student', studentId: t.studentId };
+    const other: Actor = { uid: 'stu2', role: 'student', studentId: 'someoneElse' };
+    const soon = await lessonIn(t, 3);
+    await expect(cancel(t, soon, { actor: student, mode: 'onTime' })).rejects.toThrow(/Only staff/);
+    await expect(cancel(t, soon, { actor: student })).rejects.toThrow(/contact the studio/);
+    await expect(cancel(t, soon, { actor: other })).rejects.toThrow(/your own/);
+
+    const later = await lessonIn(t, 96);
+    expect(await cancel(t, later, { actor: student })).toMatchObject({ status: 'cancelled', late: false });
+    expect(await summary(t)).toEqual({ sessionsAvailable: 4, sessionsOwed: 0 });
+  });
+});
+
+describe('addAttendee / removeAttendee', () => {
+  it('adds a student once, grows capacity, and is a no-op the second time', async () => {
+    const t = await school();
+    const ben = await addStudent(t, 'ben');
+    const id = await lessonIn(t, 24);
+    expect(await addAttendee(db, { schoolId: t.schoolId, lessonId: id, studentId: ben }, owner)).toEqual({ added: true });
+    expect(await addAttendee(db, { schoolId: t.schoolId, lessonId: id, studentId: ben }, owner)).toEqual({ added: false });
+    const l = await lessonDoc(t, id);
+    expect(l.studentIds).toEqual([t.studentId, ben]);
+    expect(l.capacity).toBe(2);
+    expect(await attendee(t, id, ben)).toMatchObject({ status: 'booked', schoolId: t.schoolId, owed: false });
+  });
+
+  it('removing a charged student restores the credit and takes them off the roster', async () => {
+    const t = await school();
+    await sell(t, t.pkg30);
+    const id = await lessonIn(t, -24);
+    await mark(t, id, 'present');
+    const res = await removeAttendee(db, { schoolId: t.schoolId, lessonId: id, studentId: t.studentId }, owner);
+    expect(res.charge).toBe('restored');
+    expect(await summary(t)).toEqual({ sessionsAvailable: 4, sessionsOwed: 0 });
+    expect(await attendee(t, id)).toMatchObject({ status: 'removed', ledgerEntryId: null });
+    const l = await lessonDoc(t, id);
+    expect(l.studentIds).toEqual([]);
+    expect(l.attendanceState).toBe('unmarked');
+    await expect(mark(t, id, 'present')).rejects.toThrow(/Add the student back/);
+
+    // Back on: booked again, and marking charges again.
+    await addAttendee(db, { schoolId: t.schoolId, lessonId: id, studentId: t.studentId }, owner);
+    expect(await attendee(t, id)).toMatchObject({ status: 'booked' });
+    expect((await mark(t, id, 'present')).charge).toBe('debited');
+  });
+
+  it('removing an owed student clears what is owed', async () => {
+    const t = await school();
+    const id = await lessonIn(t, -24);
+    await mark(t, id, 'present');
+    expect(await summary(t)).toEqual({ sessionsAvailable: 0, sessionsOwed: 1 });
+    await removeAttendee(db, { schoolId: t.schoolId, lessonId: id, studentId: t.studentId }, owner);
+    expect(await summary(t)).toEqual({ sessionsAvailable: 0, sessionsOwed: 0 });
+  });
+
+  it('re-adding a late cancel that kept its credit gives the credit back', async () => {
+    const t = await school({ lateCancelReturnsCredit: false });
+    await sell(t, t.pkg30);
+    const id = await lessonIn(t, 2);
+    await cancel(t, id);
+    expect((await summary(t)).sessionsAvailable).toBe(3);
+    await addAttendee(db, { schoolId: t.schoolId, lessonId: id, studentId: t.studentId }, owner);
+    expect((await summary(t)).sessionsAvailable).toBe(4);
+    expect(await attendee(t, id)).toMatchObject({ status: 'booked', cancelledAt: null });
+  });
+});
+
+describe('cancelLesson', () => {
+  it('restores every charged attendee: lot credit, owed lesson, kept late cancel', async () => {
+    const t = await school({ lateCancelReturnsCredit: false });
+    const ada = t.studentId;
+    const ben = await addStudent(t, 'ben');
+    const cy = await addStudent(t, 'cy');
+    const dee = await addStudent(t, 'dee');
+    const sale = await sell(t, t.pkg30);
+    await sell(t, t.pkg30, new Date(), undefined, dee);
+    const id = await lessonIn(t, 1, [ada, ben, cy, dee]);
+    await mark(t, id, 'present', ada); // from Ada's lot
+    await mark(t, id, 'present', ben); // owed
+    await cancel(t, id, { studentId: dee }); // late, keeps the credit under this policy
+    expect(await summary(t, dee)).toEqual({ sessionsAvailable: 3, sessionsOwed: 0 });
+
+    const res = await cancelLesson(db, { schoolId: t.schoolId, lessonId: id, reason: 'Teacher ill' }, owner);
+    expect(res).toEqual({ restored: 3, alreadyCancelled: false });
+    expect(await summary(t, ada)).toEqual({ sessionsAvailable: 4, sessionsOwed: 0 });
+    expect(await summary(t, ben)).toEqual({ sessionsAvailable: 0, sessionsOwed: 0 });
+    expect(await summary(t, dee)).toEqual({ sessionsAvailable: 4, sessionsOwed: 0 });
+    expect((await lot(t, sale.enrolmentId)).sessionsRemaining).toBe(4);
+    for (const s of [ada, ben, cy, dee]) expect((await attendee(t, id, s)).status).toBe('cancelled');
+    expect(await lessonDoc(t, id)).toMatchObject({ status: 'cancelled', cancelReason: 'Teacher ill' });
+
+    await expect(mark(t, id, 'present', ada)).rejects.toThrow(/cancelled/);
+    expect(await cancelLesson(db, { schoolId: t.schoolId, lessonId: id }, owner)).toEqual({
+      restored: 0,
+      alreadyCancelled: true,
+    });
+  });
+
+  it('a credit going back to an expired lot expires again', async () => {
+    const t = await school();
+    const t0 = new Date(Date.now() - 40 * DAY);
+    const sale = await sell(t, t.pkg30, t0);
+    const id = await lesson(t, new Date(t0.getTime() + DAY));
+    await setAttendance(
+      db,
+      { schoolId: t.schoolId, lessonId: id, studentId: t.studentId, status: 'present' },
+      owner,
+      new Date(t0.getTime() + DAY),
+    );
+    await cancelLesson(db, { schoolId: t.schoolId, lessonId: id }, owner);
+    expect(await lot(t, sale.enrolmentId)).toMatchObject({ sessionsRemaining: 3, sessionsUsed: 0, sessionsExpired: 1 });
+  });
+});
+
+describe('attendanceStateOf', () => {
+  it('ignores removed attendees', () => {
+    expect(attendanceStateOf(['removed'])).toBe('unmarked');
+    expect(attendanceStateOf(['present', 'removed'])).toBe('marked');
+    expect(attendanceStateOf(['present', 'booked', 'removed'])).toBe('partial');
+  });
+});

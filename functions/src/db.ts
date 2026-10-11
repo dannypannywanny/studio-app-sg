@@ -8,6 +8,8 @@ export interface Actor {
   role: Role | 'system';
   /** The caller's teacher doc in this school, if any (claims.t[schoolId]). */
   teacherId?: string | null;
+  /** The caller's student doc in this school, if any (claims.s[schoolId]). */
+  studentId?: string | null;
 }
 
 export const schoolRef = (db: Firestore, schoolId: string): DocumentReference => db.collection('schools').doc(schoolId);

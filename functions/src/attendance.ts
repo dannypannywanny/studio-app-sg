@@ -1,0 +1,454 @@
+// Attendance: marking, cancelling, adding and removing students, cancelling whole lessons.
+//
+// Every change goes through prepareTransition (reads) + applyTransition (writes), which decide from the
+// attendee's current charge and the target status whether to debit (earliest-expiring lot, owed when
+// empty) or restore (same lot). An attendee holding a credit points at the entry that charged it.
+import { FieldValue, Timestamp, type DocumentData, type DocumentReference, type DocumentSnapshot, type Firestore } from 'firebase-admin/firestore';
+import { HttpsError } from 'firebase-functions/v2/https';
+import {
+  consumesCredit,
+  resolvePolicy,
+  type AttendanceState,
+  type AttendanceStatus,
+  type CreditPolicy,
+} from '@lessonkaki/shared';
+import { CreditTx, pickLot, readActiveLots, type LotState } from './creditTx';
+import { audit, notFound, now, readAll, schoolRef, type Actor } from './db';
+
+export const MARKABLE_STATUSES = ['booked', 'present', 'absent', 'lateCancelled'] as const;
+export type MarkableStatus = (typeof MARKABLE_STATUSES)[number];
+
+export type Charge = 'debited' | 'owed' | 'restored' | 'restoredExpired' | 'none';
+
+const HOUR_MS = 3_600_000;
+const isStaff = (actor: Actor) => actor.role === 'owner' || actor.role === 'admin' || actor.role === 'system';
+
+export function assertCanMark(actor: Actor, lessonTeacherId: string): void {
+  if (isStaff(actor)) return;
+  if (actor.role === 'teacher' && actor.teacherId && actor.teacherId === lessonTeacherId) return;
+  throw new HttpsError('permission-denied', 'You can only mark attendance for your own lessons');
+}
+
+/** Removed attendees don't count towards a lesson's attendance state. */
+export function attendanceStateOf(statuses: AttendanceStatus[]): AttendanceState {
+  const counted = statuses.filter((s) => s !== 'removed');
+  const marked = counted.filter((s) => s !== 'booked').length;
+  if (marked === 0) return 'unmarked';
+  return marked === counted.length ? 'marked' : 'partial';
+}
+
+// ---------------------------------------------------------------------------------------------
+// The shared transition: prepare (reads) then apply (writes)
+// ---------------------------------------------------------------------------------------------
+
+export interface Prepared {
+  action: 'debit' | 'restore' | 'none';
+  lot: LotState | null;
+}
+
+/** Reads what a transition needs: candidate lots for a debit, the charged lot for a restore. */
+export async function prepareTransition(
+  ct: CreditTx,
+  attendee: DocumentSnapshot,
+  to: AttendanceStatus,
+  policy: CreditPolicy,
+  lessonStart: Timestamp,
+): Promise<Prepared> {
+  const holdsCharge = attendee.get('ledgerEntryId') != null;
+  const wantsCharge = consumesCredit(to, policy);
+  if (wantsCharge && !holdsCharge) {
+    const lot = pickLot(await readActiveLots(ct, attendee.id), lessonStart.toMillis());
+    if (!lot && !policy.allowOwedLessons) {
+      throw new HttpsError('failed-precondition', 'This student has no credits left');
+    }
+    return { action: 'debit', lot };
+  }
+  if (!wantsCharge && holdsCharge) {
+    const enrolmentId = attendee.get('enrolmentId') as string | null;
+    if (!enrolmentId) return { action: 'restore', lot: null };
+    const snap = await ct.tx.get(ct.school.collection('enrolments').doc(enrolmentId));
+    if (!snap.exists) notFound('Enrolment');
+    return { action: 'restore', lot: ct.useLot(snap) };
+  }
+  return { action: 'none', lot: null };
+}
+
+export interface Applied {
+  charge: Charge;
+  /** The lot now charged for this attendee (null when owed or uncharged). */
+  enrolmentId: string | null;
+  update: Record<string, unknown>;
+}
+
+/** Writes the ledger side of a transition and returns the attendee update. No reads. */
+export function applyTransition(
+  ct: CreditTx,
+  lessonId: string,
+  attendee: DocumentSnapshot,
+  to: AttendanceStatus,
+  prepared: Prepared,
+): Applied {
+  const studentId = attendee.id;
+  const attendeeKey = `${lessonId}_${studentId}`;
+  const rev = ((attendee.get('rev') as number | undefined) ?? 0) + 1;
+  const update: Record<string, unknown> = {
+    status: to,
+    rev,
+    markedBy: to === 'booked' ? null : ct.actor.uid,
+    markedAt: to === 'booked' ? null : Timestamp.fromDate(ct.at),
+    updatedAt: now(),
+  };
+
+  if (prepared.action === 'debit') {
+    const lot = prepared.lot;
+    const entryId = ct.debit(studentId, lot, {
+      lessonId,
+      attendeeKey,
+      key: `${attendeeKey}:${rev}:${lot ? 'debit' : 'owed'}`,
+    });
+    Object.assign(update, { ledgerEntryId: entryId, enrolmentId: lot?.id ?? null, owed: !lot });
+    return { charge: lot ? 'debited' : 'owed', enrolmentId: lot?.id ?? null, update };
+  }
+  if (prepared.action === 'restore') {
+    const charge = ct.restore(studentId, prepared.lot, {
+      lessonId,
+      attendeeKey,
+      key: `${attendeeKey}:${rev}`,
+      reversesEntryId: attendee.get('ledgerEntryId') as string,
+    });
+    Object.assign(update, { ledgerEntryId: null, enrolmentId: null, owed: false });
+    return { charge, enrolmentId: null, update };
+  }
+  return { charge: 'none', enrolmentId: (attendee.get('enrolmentId') as string | null) ?? null, update };
+}
+
+interface Loaded {
+  ct: CreditTx;
+  lessonRef: DocumentReference;
+  lesson: DocumentData;
+  attendee: DocumentSnapshot;
+  siblings: DocumentSnapshot[];
+  policy: CreditPolicy;
+}
+
+/** Reads school, lesson, student, attendee and its siblings for a one-attendee change. */
+async function loadOne(ct: CreditTx, input: { lessonId: string; studentId: string }): Promise<Loaded> {
+  const lessonRef = ct.school.collection('lessons').doc(input.lessonId);
+  const [schoolSnap, lessonSnap, attendeeSnap, studentSnap] = await readAll(
+    ct.tx,
+    ct.school,
+    lessonRef,
+    lessonRef.collection('attendees').doc(input.studentId),
+    ct.school.collection('students').doc(input.studentId),
+  );
+  if (!schoolSnap.exists) notFound('School');
+  if (!lessonSnap.exists) notFound('Lesson');
+  if (!studentSnap.exists) notFound('Student');
+  if (!attendeeSnap.exists) throw new HttpsError('not-found', 'That student is not on this lesson');
+  const lesson = lessonSnap.data()!;
+  if (lesson.status === 'cancelled') throw new HttpsError('failed-precondition', 'This lesson is cancelled');
+  const siblings = (await ct.tx.get(lessonRef.collection('attendees'))).docs;
+  return { ct, lessonRef, lesson, attendee: attendeeSnap, siblings, policy: resolvePolicy(schoolSnap.get('policy')) };
+}
+
+/** Prepares, applies and writes one attendee change plus the lesson's attendance state. */
+async function changeOne(
+  l: Loaded,
+  to: AttendanceStatus,
+  extra: { lesson?: Record<string, unknown>; attendee?: Record<string, unknown> } = {},
+): Promise<Applied> {
+  const prepared = await prepareTransition(l.ct, l.attendee, to, l.policy, l.lesson.startAt as Timestamp);
+  const applied = applyTransition(l.ct, l.lessonRef.id, l.attendee, to, prepared);
+  l.ct.flush();
+  l.ct.tx.update(l.attendee.ref, { ...applied.update, ...extra.attendee });
+  const statuses = l.siblings.map((d) => (d.id === l.attendee.id ? to : (d.get('status') as AttendanceStatus)));
+  l.ct.tx.update(l.lessonRef, { attendanceState: attendanceStateOf(statuses), ...extra.lesson, updatedAt: now() });
+  return applied;
+}
+
+// ---------------------------------------------------------------------------------------------
+// setAttendance: present / absent / lateCancelled / booked (= unmark)
+// ---------------------------------------------------------------------------------------------
+
+export interface SetAttendanceInput {
+  schoolId: string;
+  lessonId: string;
+  studentId: string;
+  status: MarkableStatus;
+}
+
+export interface SetAttendanceResult {
+  status: AttendanceStatus;
+  /** What happened to the credit: debited from a lot, recorded as owed, restored, or nothing. */
+  charge: Charge;
+  enrolmentId: string | null;
+}
+
+export async function setAttendance(
+  db: Firestore,
+  input: SetAttendanceInput,
+  actor: Actor,
+  at: Date = new Date(),
+): Promise<SetAttendanceResult> {
+  const school = schoolRef(db, input.schoolId);
+  return db.runTransaction(async (tx) => {
+    const l = await loadOne(new CreditTx(tx, school, actor, at), input);
+    assertCanMark(actor, l.lesson.teacherId as string);
+    const from = l.attendee.get('status') as AttendanceStatus;
+    if (from === input.status) {
+      return { status: from, charge: 'none', enrolmentId: (l.attendee.get('enrolmentId') as string | null) ?? null };
+    }
+    if (from === 'removed') throw new HttpsError('failed-precondition', 'Add the student back to the lesson first');
+    const { charge, enrolmentId } = await changeOne(l, input.status);
+    audit(tx, school, actor, 'setAttendance', `lessons/${input.lessonId}/attendees/${input.studentId}`, {
+      from,
+      to: input.status,
+      charge,
+    });
+    return { status: input.status, charge, enrolmentId };
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// cancelAttendance: on time or late, from policy.lateCancelHours
+// ---------------------------------------------------------------------------------------------
+
+export const CANCEL_MODES = ['auto', 'onTime', 'late'] as const;
+export type CancelMode = (typeof CANCEL_MODES)[number];
+
+export interface CancelAttendanceInput {
+  schoolId: string;
+  lessonId: string;
+  studentId: string;
+  /** 'auto' decides from the policy; staff may force 'onTime' (e.g. illness waived) or 'late'. */
+  mode?: CancelMode;
+}
+
+export interface CancelAttendanceResult {
+  status: 'cancelled' | 'lateCancelled';
+  late: boolean;
+  charge: Charge;
+}
+
+/** Late when the cancellation is inside `lateCancelHours` of the start (or after it). */
+export function isLateCancel(lessonStart: Date, at: Date, policy: CreditPolicy): boolean {
+  return lessonStart.getTime() - at.getTime() < policy.lateCancelHours * HOUR_MS;
+}
+
+export async function cancelAttendance(
+  db: Firestore,
+  input: CancelAttendanceInput,
+  actor: Actor,
+  at: Date = new Date(),
+): Promise<CancelAttendanceResult> {
+  const school = schoolRef(db, input.schoolId);
+  const mode = input.mode ?? 'auto';
+  return db.runTransaction(async (tx) => {
+    const l = await loadOne(new CreditTx(tx, school, actor, at), input);
+    const late =
+      mode === 'auto' ? isLateCancel((l.lesson.startAt as Timestamp).toDate(), at, l.policy) : mode === 'late';
+
+    if (actor.role === 'student') {
+      if (actor.studentId !== input.studentId) {
+        throw new HttpsError('permission-denied', 'You can only cancel your own lessons');
+      }
+      if (mode !== 'auto') throw new HttpsError('permission-denied', 'Only staff can choose how a cancel counts');
+      if (late) {
+        throw new HttpsError(
+          'failed-precondition',
+          `Lessons can be cancelled online up to ${l.policy.lateCancelHours} hours before. Please contact the studio.`,
+        );
+      }
+    } else {
+      assertCanMark(actor, l.lesson.teacherId as string);
+    }
+
+    const to = late ? 'lateCancelled' : 'cancelled';
+    const from = l.attendee.get('status') as AttendanceStatus;
+    if (from === 'removed') throw new HttpsError('failed-precondition', 'That student was removed from this lesson');
+    if (from === to) return { status: to, late, charge: 'none' };
+    const { charge } = await changeOne(l, to, { attendee: { cancelledAt: Timestamp.fromDate(at), cancelledBy: actor.uid } });
+    audit(tx, school, actor, 'cancelAttendance', `lessons/${input.lessonId}/attendees/${input.studentId}`, {
+      from,
+      to,
+      mode,
+      charge,
+    });
+    return { status: to, late, charge };
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// addAttendee / removeAttendee
+// ---------------------------------------------------------------------------------------------
+
+export interface AttendeeInput {
+  schoolId: string;
+  lessonId: string;
+  studentId: string;
+}
+
+export function newAttendeeDoc(schoolId: string, lessonId: string, studentId: string, startAt: Timestamp, source = 'admin') {
+  return {
+    schoolId,
+    lessonId,
+    studentId,
+    lessonStartAt: startAt,
+    status: 'booked',
+    owed: false,
+    enrolmentId: null,
+    ledgerEntryId: null,
+    rev: 0,
+    source,
+    markedBy: null,
+    markedAt: null,
+    createdAt: now(),
+    updatedAt: now(),
+  };
+}
+
+export async function addAttendee(
+  db: Firestore,
+  input: AttendeeInput,
+  actor: Actor,
+  at: Date = new Date(),
+): Promise<{ added: boolean }> {
+  const school = schoolRef(db, input.schoolId);
+  return db.runTransaction(async (tx) => {
+    const ct = new CreditTx(tx, school, actor, at);
+    const lessonRef = school.collection('lessons').doc(input.lessonId);
+    const attendeeRef = lessonRef.collection('attendees').doc(input.studentId);
+    const [schoolSnap, lessonSnap, studentSnap, attendeeSnap] = await readAll(
+      tx,
+      school,
+      lessonRef,
+      school.collection('students').doc(input.studentId),
+      attendeeRef,
+    );
+    if (!schoolSnap.exists) notFound('School');
+    if (!lessonSnap.exists) notFound('Lesson');
+    if (!studentSnap.exists) notFound('Student');
+    if (studentSnap.get('status') === 'archived') throw new HttpsError('failed-precondition', 'This student is archived');
+    const lesson = lessonSnap.data()!;
+    if (lesson.status === 'cancelled') throw new HttpsError('failed-precondition', 'This lesson is cancelled');
+
+    const current = attendeeSnap.exists ? (attendeeSnap.get('status') as AttendanceStatus) : null;
+    if (current === 'booked' || current === 'present' || current === 'absent') return { added: false };
+
+    const siblings = (await tx.get(lessonRef.collection('attendees'))).docs;
+    const policy = resolvePolicy(schoolSnap.get('policy'));
+    if (attendeeSnap.exists) {
+      // Back on after a cancel or removal: re-book (a late cancel that kept its credit gives it back).
+      const prepared = await prepareTransition(ct, attendeeSnap, 'booked', policy, lesson.startAt as Timestamp);
+      const { update } = applyTransition(ct, input.lessonId, attendeeSnap, 'booked', prepared);
+      ct.flush();
+      tx.update(attendeeRef, { ...update, cancelledAt: null, cancelledBy: null });
+    } else {
+      tx.create(attendeeRef, newAttendeeDoc(input.schoolId, input.lessonId, input.studentId, lesson.startAt as Timestamp));
+    }
+    const studentIds = [...new Set([...(lesson.studentIds as string[]), input.studentId])];
+    const statuses = siblings.filter((d) => d.id !== input.studentId).map((d) => d.get('status') as AttendanceStatus);
+    tx.update(lessonRef, {
+      studentIds: FieldValue.arrayUnion(input.studentId),
+      capacity: Math.max((lesson.capacity as number | undefined) ?? 1, studentIds.length),
+      attendanceState: attendanceStateOf([...statuses, 'booked']),
+      // A one-off change to a series occurrence: later series edits leave this lesson alone.
+      ...(lesson.seriesId ? { isException: true } : {}),
+      updatedAt: now(),
+    });
+    audit(tx, school, actor, 'addAttendee', `lessons/${input.lessonId}/attendees/${input.studentId}`, { from: current });
+    return { added: true };
+  });
+}
+
+/** Takes a student off a lesson. A charge is restored; the attendee doc stays (status removed) for history. */
+export async function removeAttendee(
+  db: Firestore,
+  input: AttendeeInput,
+  actor: Actor,
+  at: Date = new Date(),
+): Promise<{ charge: Charge }> {
+  const school = schoolRef(db, input.schoolId);
+  return db.runTransaction(async (tx) => {
+    const l = await loadOne(new CreditTx(tx, school, actor, at), input);
+    const from = l.attendee.get('status') as AttendanceStatus;
+    if (from === 'removed') return { charge: 'none' as Charge };
+    const { charge } = await changeOne(l, 'removed', {
+      lesson: { studentIds: FieldValue.arrayRemove(input.studentId), ...(l.lesson.seriesId ? { isException: true } : {}) },
+    });
+    audit(tx, school, actor, 'removeAttendee', `lessons/${input.lessonId}/attendees/${input.studentId}`, { from, charge });
+    return { charge };
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// cancelLesson: the studio cancels; every charged attendee gets their credit back
+// ---------------------------------------------------------------------------------------------
+
+export interface CancelLessonResult {
+  restored: number;
+  alreadyCancelled: boolean;
+}
+
+/**
+ * Cancels one lesson inside an existing CreditTx (also used by series edits). Reads first, then
+ * returns a function that does the writes, so several lessons can share one transaction.
+ */
+export async function prepareCancelLesson(
+  ct: CreditTx,
+  lessonRef: DocumentReference,
+  lesson: DocumentData,
+  policy: CreditPolicy,
+  reason: string | null,
+): Promise<() => number> {
+  const attendees = (await ct.tx.get(lessonRef.collection('attendees'))).docs;
+  const plans: { att: DocumentSnapshot; to: AttendanceStatus; prepared: Prepared }[] = [];
+  for (const att of attendees) {
+    const from = att.get('status') as AttendanceStatus;
+    if (from === 'removed') continue;
+    const charged = att.get('ledgerEntryId') != null;
+    // On-time and late cancels stay as they were, unless a late cancel kept its credit.
+    if ((from === 'cancelled' || from === 'lateCancelled') && !charged) continue;
+    const to: AttendanceStatus = 'cancelled';
+    plans.push({ att, to, prepared: await prepareTransition(ct, att, to, policy, lesson.startAt as Timestamp) });
+  }
+  return () => {
+    let restored = 0;
+    for (const p of plans) {
+      const { charge, update } = applyTransition(ct, lessonRef.id, p.att, p.to, p.prepared);
+      if (charge === 'restored' || charge === 'restoredExpired') restored += 1;
+      ct.tx.update(p.att.ref, { ...update, cancelledAt: Timestamp.fromDate(ct.at), cancelledBy: ct.actor.uid });
+    }
+    ct.tx.update(lessonRef, {
+      status: 'cancelled',
+      cancelReason: reason,
+      cancelledAt: Timestamp.fromDate(ct.at),
+      cancelledBy: ct.actor.uid,
+      updatedAt: now(),
+    });
+    return restored;
+  };
+}
+
+export async function cancelLesson(
+  db: Firestore,
+  input: { schoolId: string; lessonId: string; reason?: string | null },
+  actor: Actor,
+  at: Date = new Date(),
+): Promise<CancelLessonResult> {
+  const school = schoolRef(db, input.schoolId);
+  return db.runTransaction(async (tx) => {
+    const ct = new CreditTx(tx, school, actor, at);
+    const lessonRef = school.collection('lessons').doc(input.lessonId);
+    const [schoolSnap, lessonSnap] = await readAll(tx, school, lessonRef);
+    if (!schoolSnap.exists) notFound('School');
+    if (!lessonSnap.exists) notFound('Lesson');
+    const lesson = lessonSnap.data()!;
+    if (lesson.status === 'cancelled') return { restored: 0, alreadyCancelled: true };
+    const write = await prepareCancelLesson(ct, lessonRef, lesson, resolvePolicy(schoolSnap.get('policy')), input.reason ?? null);
+    const restored = write();
+    ct.flush();
+    audit(tx, school, actor, 'cancelLesson', `lessons/${input.lessonId}`, { restored, reason: input.reason ?? null });
+    return { restored, alreadyCancelled: false };
+  });
+}

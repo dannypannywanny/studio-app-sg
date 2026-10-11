@@ -99,6 +99,10 @@ export interface Lesson {
   status: LessonStatus;
   studentIds: string[];
   attendanceState: AttendanceState;
+  seriesId?: string | null;
+  isException?: boolean;
+  cancelReason?: string | null;
+  locationId?: string | null;
 }
 
 export interface Attendee {

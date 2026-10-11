@@ -1,0 +1,11 @@
+rules_version = '2';
+
+// Invoice PDFs and other school files are private. Clients never read Storage directly:
+// staff and students get a short-lived signed URL from the getInvoicePdfUrl function.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

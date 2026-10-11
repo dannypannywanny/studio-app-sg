@@ -1,23 +1,15 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { setAttendance, type MarkableStatus } from '../src/credits';
+import { describe, expect, it } from 'vitest';
+import { setAttendance, type MarkableStatus } from '../src/attendance';
 import { createLesson } from '../src/lessons';
 import { reconcileStudent } from '../src/reconcile';
 import { mergeClaims } from '../src/members';
-import { DAY, attendee, db, ledger, lesson, lot, makeSchool, owner, sell, summary, type TestSchool } from './helpers';
+import { DAY, attendee, db, ledger, lesson, lot, owner, sell, summary, withInvariant, type TestSchool } from './helpers';
 
 const mark = (t: TestSchool, lessonId: string, status: MarkableStatus, at?: Date, actor = owner) =>
   setAttendance(db, { schoolId: t.schoolId, lessonId, studentId: t.studentId, status }, actor, at);
 
-// Every test registers its school here; afterEach checks the ledger invariant for it.
-let current: TestSchool | null = null;
-async function school(policy = {}) {
-  current = await makeSchool(policy);
-  return current;
-}
-afterEach(async () => {
-  if (current) expect(await reconcileStudent(db, current.schoolId, current.studentId)).toEqual([]);
-  current = null;
-});
+// Every school a test makes is checked against the ledger invariant afterwards.
+const school = withInvariant();
 
 describe('sellPackage', () => {
   it('sell -> 4 credits, an invoice with a sequential number, a lot and a grant', async () => {

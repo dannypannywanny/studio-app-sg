@@ -331,9 +331,25 @@ select:focus {
   color: var(--color-warning);
 }
 .badge-expired,
-.badge-void {
+.badge-void,
+.badge-overdue,
+.badge-cancelled-lesson {
   background: var(--color-danger-bg);
   color: var(--color-danger);
+}
+
+.badge-cancelled,
+.badge-removed,
+.badge-completed {
+  background: var(--color-row-hover);
+  color: var(--color-muted);
+}
+
+.inline-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 360px;
 }
 
 /* Messages */

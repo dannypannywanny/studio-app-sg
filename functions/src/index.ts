@@ -8,6 +8,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { z } from 'zod';
 import { ROLES } from '@lessonkaki/shared';
 import { requireRole } from './auth';
+import * as attendance from './attendance';
 import * as credits from './credits';
 import * as lessons from './lessons';
 import * as members from './members';
@@ -70,14 +71,50 @@ const MarkAttendance = z.object({
   schoolId: id,
   lessonId: id,
   studentId: id,
-  status: z.enum(credits.MARKABLE_STATUSES),
+  status: z.enum(attendance.MARKABLE_STATUSES),
 });
 
 export const markAttendance = onCall(async (req) => {
   const input = parse(MarkAttendance, req.data);
   // Teachers pass this gate; setAttendance then checks the lesson is theirs, inside the transaction.
   const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin', 'teacher']);
-  return credits.setAttendance(db(), input, actor);
+  return attendance.setAttendance(db(), input, actor);
+});
+
+const CancelAttendance = z.object({
+  schoolId: id,
+  lessonId: id,
+  studentId: id,
+  mode: z.enum(attendance.CANCEL_MODES).optional(),
+});
+
+export const cancelAttendance = onCall(async (req) => {
+  const input = parse(CancelAttendance, req.data);
+  // Students may cancel their own lessons on time; the engine checks ownership and the cutoff.
+  const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin', 'teacher', 'student']);
+  return attendance.cancelAttendance(db(), input, actor);
+});
+
+const Attendee = z.object({ schoolId: id, lessonId: id, studentId: id });
+
+export const addAttendee = onCall(async (req) => {
+  const input = parse(Attendee, req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
+  return attendance.addAttendee(db(), input, actor);
+});
+
+export const removeAttendee = onCall(async (req) => {
+  const input = parse(Attendee, req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
+  return attendance.removeAttendee(db(), input, actor);
+});
+
+const CancelLesson = z.object({ schoolId: id, lessonId: id, reason: z.string().trim().max(300).nullish() });
+
+export const cancelLesson = onCall(async (req) => {
+  const input = parse(CancelLesson, req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
+  return attendance.cancelLesson(db(), input, actor);
 });
 
 const SellPackage = z.object({
