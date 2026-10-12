@@ -17,6 +17,8 @@ import {
   weeklyOccurrences,
 } from './index';
 import { buildPayNowPayload, crc16, hasValidCrc, parseTlv, withCrc } from './paynow';
+import { atRiskStudents, summariseAttendance } from './reports';
+import { brandingCssVars, googleFontsHref } from './branding';
 
 describe('consumesCredit', () => {
   it('present always uses a credit, booked never does', () => {
@@ -178,5 +180,85 @@ describe('PayNow / EMVCo payload', () => {
     expect(fields.get('59')).toHaveLength(25);
     expect(() => buildPayNowPayload({ uen: 'nope', amountCents: 100, reference: 'x', merchantName: 'x' })).toThrow(/UEN/);
     expect(() => buildPayNowPayload({ uen: '201403121W', amountCents: 0, reference: 'x', merchantName: 'x' })).toThrow();
+  });
+});
+
+describe('attendance reports', () => {
+  const d = (iso: string) => new Date(iso);
+  const rows = [
+    { studentId: 'a', status: 'present', lessonStartAt: d('2026-10-01T11:00:00Z') },
+    { studentId: 'a', status: 'absent', lessonStartAt: d('2026-10-08T11:00:00Z') },
+    { studentId: 'a', status: 'lateCancelled', lessonStartAt: d('2026-10-15T11:00:00Z') },
+    { studentId: 'a', status: 'booked', lessonStartAt: d('2026-10-22T11:00:00Z') },
+    { studentId: 'b', status: 'present', lessonStartAt: d('2026-10-02T11:00:00Z') },
+    { studentId: 'b', status: 'cancelled', lessonStartAt: d('2026-10-09T11:00:00Z') },
+    { studentId: 'b', status: 'removed', lessonStartAt: d('2026-10-10T11:00:00Z') },
+  ] as const;
+
+  it('counts statuses per student; rate = present / (present + absent + late cancel)', () => {
+    const s = summariseAttendance([...rows]);
+    expect(s.get('a')).toMatchObject({ present: 1, absent: 1, lateCancelled: 1, cancelled: 0, unmarked: 1, rate: 1 / 3 });
+    expect(s.get('b')).toMatchObject({ present: 1, cancelled: 1, rate: 1 });
+    expect(s.get('b')!.total).toBe(2); // removed doesn't count
+  });
+
+  it('flags students at risk, with reasons', () => {
+    const now = d('2026-10-20T00:00:00Z');
+    const risk = atRiskStudents({
+      now,
+      students: [
+        { id: 'a', status: 'active', sessionsAvailable: 3, sessionsOwed: 0 },
+        { id: 'b', status: 'active', sessionsAvailable: 1, sessionsOwed: 0 },
+        { id: 'c', status: 'active', sessionsAvailable: 4, sessionsOwed: 2 },
+        { id: 'd', status: 'inactive', sessionsAvailable: 0, sessionsOwed: 0 },
+      ],
+      attendance: [...rows],
+      upcomingByStudent: new Map([['a', 1], ['b', 2], ['c', 1]]),
+      lots: [{ studentId: 'c', remaining: 4, validUntil: d('2026-10-30T00:00:00Z') }],
+    });
+    expect(risk.map((r) => [r.studentId, r.reasons])).toEqual([
+      ['a', ['absences']],
+      ['b', ['lowCredits']],
+      ['c', ['owed', 'expiringSoon']],
+    ]);
+  });
+
+  it('flags active students with nothing booked', () => {
+    const risk = atRiskStudents({
+      now: d('2026-10-20T00:00:00Z'),
+      students: [{ id: 'z', status: 'active', sessionsAvailable: 4, sessionsOwed: 0 }],
+      attendance: [],
+      upcomingByStudent: new Map(),
+      lots: [],
+    });
+    expect(risk).toEqual([{ studentId: 'z', reasons: ['noUpcoming'] }]);
+  });
+});
+
+describe('branding', () => {
+  it('maps school branding to CSS variables, ignoring anything unsafe', () => {
+    const vars = brandingCssVars({
+      colors: { primary: '#6300E2', primaryHover: '#8E43F0', text: '#150E1F', muted: 'red; background: url(x)' },
+      fonts: { display: 'Playfair Display', body: 'Roboto' },
+      logoUrl: 'https://example.test/logo.png',
+      buttonRadius: 28,
+    });
+    expect(vars['--brand-primary']).toBe('#6300E2');
+    expect(vars['--brand-primary-hover']).toBe('#8E43F0');
+    expect(vars['--color-text']).toBe('#150E1F');
+    expect(vars['--color-muted']).toBeUndefined();
+    expect(vars['--font-display']).toBe(`'Playfair Display', Georgia, serif`);
+    expect(vars['--brand-logo']).toBe(`url("https://example.test/logo.png")`);
+    expect(vars['--radius-button']).toBe('28px');
+    expect(brandingCssVars({ logoUrl: 'javascript:alert(1)' })['--brand-logo']).toBeUndefined();
+    expect(brandingCssVars({ fonts: { body: 'Evil"; }' } })['--font-body']).toBeUndefined();
+    expect(brandingCssVars(null)).toEqual({});
+  });
+
+  it('builds one Google Fonts link for the families', () => {
+    expect(googleFontsHref({ fonts: { display: 'Playfair Display', body: 'Roboto' } })).toBe(
+      'https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Roboto:wght@400;500;700&display=swap',
+    );
+    expect(googleFontsHref({})).toBeNull();
   });
 });

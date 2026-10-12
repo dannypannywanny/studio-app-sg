@@ -52,7 +52,7 @@ a {
 .topbar {
   display: flex;
   align-items: center;
-  gap: var(--space-5);
+  gap: var(--space-4);
   padding: var(--space-3) var(--space-5);
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-border);
@@ -68,14 +68,17 @@ a {
   width: var(--brand-logo-width);
   height: var(--brand-logo-height);
   border-radius: var(--radius-sm);
-  background: var(--brand-logo) center / contain no-repeat, var(--brand-primary);
+  background: var(--brand-logo) center / contain no-repeat, var(--brand-logo-bg);
+  display: inline-block;
 }
 .nav {
   display: flex;
-  gap: var(--space-1);
+  flex-wrap: wrap;
+  gap: 2px;
 }
 .nav a {
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-sm);
   border-radius: var(--radius-sm);
   color: var(--color-text);
   text-decoration: none;
@@ -152,7 +155,7 @@ a {
   gap: var(--space-2);
   padding: var(--space-2) var(--space-4);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-button);
   background: var(--color-surface);
   color: var(--color-text);
   font: inherit;
@@ -505,6 +508,30 @@ select:focus {
   display: block;
 }
 
+/* Dashboard */
+.tile-link {
+  text-decoration: none;
+  color: inherit;
+}
+.tile-link:hover {
+  border-color: var(--brand-primary);
+}
+.split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--space-4);
+}
+.fieldset-plain {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+input[type='color'] {
+  height: 38px;
+  padding: 2px;
+}
+
 /* Messages */
 .error {
   color: var(--color-danger);
@@ -531,6 +558,12 @@ select:focus {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+}
+
+@media (max-width: 1180px) {
+  .account .muted {
+    display: none;
+  }
 }
 
 @media (max-width: 640px) {

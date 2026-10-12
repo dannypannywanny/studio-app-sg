@@ -20,7 +20,7 @@ export interface School {
   timezone: string;
   currency: string;
   policy?: Partial<CreditPolicy>;
-  branding?: { logoPath: string | null; colors: Record<string, string> | null };
+  branding?: import('@lessonkaki/shared').Branding | null;
 }
 
 export interface Teacher {

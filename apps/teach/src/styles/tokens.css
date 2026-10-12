@@ -1,7 +1,7 @@
 /*
  * Design tokens. The ONLY place colours, fonts, radii and the logo are defined.
- * Brand slot: when the singyourwayhome.sg brand is ready, override the --brand-* values
- * (and the font imports) here, or per school from schools/{id}.branding at runtime.
+ * These are the LessonKaki defaults. A school's theme comes from schools/{id}.branding and is applied at
+ * runtime as overrides of these variables (Layout.tsx, via brandingCssVars in packages/shared).
  */
 :root {
   /* Brand (replace with the studio's palette, fonts and logo) */
@@ -12,6 +12,8 @@
   --brand-logo: none; /* e.g. url('/brand/logo.svg') */
   --brand-logo-width: 28px;
   --brand-logo-height: 28px;
+  --brand-logo-bg: var(--brand-primary);
+  --radius-button: 6px;
   --font-body: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-display: var(--font-body);
 

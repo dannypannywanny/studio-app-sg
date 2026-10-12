@@ -36,7 +36,24 @@ async function main() {
     timezone: 'Asia/Singapore',
     currency: 'SGD',
     hosts: { teach: 'localhost:5173', learn: null },
-    branding: { logoPath: null, colors: null },
+    // School #1's theme, from replica/brand-tokens.md (singyourwayhome.sg). tokens.css stays the default.
+    branding: {
+      colors: {
+        primary: '#6300E2',
+        primaryHover: '#8E43F0',
+        onPrimary: '#FFFFFF',
+        accent: '#8693E1',
+        text: '#150E1F',
+        muted: '#584D66',
+        background: '#F3F1F6',
+        surface: '#FFFFFF',
+      },
+      fonts: { display: 'Playfair Display', body: 'Roboto' },
+      // TODO: replace with a small optimised copy hosted with the app (the source PNG is 1.4 MB).
+      logoUrl: 'https://singyourwayhome.sg/wp-content/uploads/2025/09/SYWH-Logo-Transparent-BG.png',
+      buttonRadius: 28,
+      siteUrl: 'https://singyourwayhome.sg',
+    },
     gateways: { hitpay: { enabled: false, mode: 'sandbox' } },
     policy: DEFAULT_POLICY,
     pdpa: { dpoName: null, dpoEmail: null, noticeVersion: null },
@@ -56,6 +73,37 @@ async function main() {
     name: 'Voice lessons',
     teacherIds: [TEACHER_ID],
     defaultDurationMin: 60,
+    active: true,
+    createdAt: ts,
+    updatedAt: ts,
+  });
+  batch.set(school.collection('locations').doc('studio'), {
+    name: 'Studio',
+    publicName: 'Studio',
+    address: null,
+    isOnline: false,
+    active: true,
+    createdAt: ts,
+    updatedAt: ts,
+  });
+  batch.set(school.collection('locations').doc('online'), {
+    name: 'Online (Zoom)',
+    publicName: 'Online',
+    address: null,
+    isOnline: true,
+    active: true,
+    createdAt: ts,
+    updatedAt: ts,
+  });
+  batch.set(school.collection('packages').doc('trial'), {
+    name: 'Trial lesson',
+    subjectId: 'voice',
+    kind: 'trial',
+    sessions: 1,
+    priceCents: 5000,
+    validityDays: 30,
+    sellsOnline: true,
+    oncePerStudent: true,
     active: true,
     createdAt: ts,
     updatedAt: ts,

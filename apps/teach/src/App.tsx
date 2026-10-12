@@ -2,6 +2,11 @@ import type { ReactNode } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router';
 import { Layout } from './Layout';
 import { Calendar } from './pages/Calendar';
+import { Dashboard } from './pages/Dashboard';
+import { Packages } from './pages/Packages';
+import { Reports } from './pages/Reports';
+import { Settings } from './pages/Settings';
+import { Staff } from './pages/Staff';
 import { InvoiceDetail } from './pages/InvoiceDetail';
 import { Invoices } from './pages/Invoices';
 import { FinishSignIn } from './pages/FinishSignIn';
@@ -48,7 +53,7 @@ export function App() {
               </RequireStaff>
             }
           >
-            <Route index element={<Navigate to="/calendar" replace />} />
+            <Route index element={<Dashboard />} />
             <Route path="calendar" element={<Calendar />} />
             <Route path="students" element={<Students />} />
             <Route path="students/:studentId" element={<StudentDetail />} />
@@ -56,7 +61,11 @@ export function App() {
             <Route path="lessons/:lessonId" element={<LessonDetail />} />
             <Route path="invoices" element={<Invoices />} />
             <Route path="invoices/:invoiceId" element={<InvoiceDetail />} />
-            <Route path="*" element={<Navigate to="/students" replace />} />
+            <Route path="packages" element={<Packages />} />
+            <Route path="reports" element={<Reports />} />
+            <Route path="staff" element={<Staff />} />
+            <Route path="settings" element={<Settings />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
       </SessionProvider>

@@ -1,6 +1,6 @@
 rules_version = '2';
 
-// DRAFT for LessonKaki. Copy to the repo root when scaffolding and cover with emulator tests.
+// LessonKaki Firestore rules. Covered by functions/test/rules.test.ts (emulator).
 // Claims: { r: { [schoolId]: role }, t: { [schoolId]: teacherId }, s: { [schoolId]: studentId } }
 // Money and credit collections are written only by Cloud Functions (Admin SDK bypasses rules).
 service cloud.firestore {
@@ -15,6 +15,11 @@ service cloud.firestore {
     function untouched(fields) { return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields); }
 
     match /publicSchools/{host} { allow read: if true; allow write: if false; }
+
+    // Collection-group reads of attendees (attendance report): staff of the attendee's school only.
+    match /{path=**}/attendees/{attendeeId} {
+      allow read: if isStaff(resource.data.schoolId);
+    }
 
     match /schools/{s} {
       allow read: if role(s) != null;
@@ -99,6 +104,8 @@ service cloud.firestore {
       match /slotLocks/{id} { allow read, write: if false; }
       match /counters/{id} { allow read, write: if false; }
       match /auditLog/{id} { allow read: if isStaff(s); allow write: if false; }
+      match /jobs/{id} { allow read: if isStaff(s); allow write: if false; }
+      match /idempotency/{id} { allow read, write: if false; }
     }
   }
 }
