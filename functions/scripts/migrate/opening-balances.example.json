@@ -1,0 +1,23 @@
+{
+  "source": "SYNTHETIC EXAMPLE - copy to migration/raw/opening-balances.json and fill from Classcard",
+  "lots": [
+    {
+      "legacyLotId": "CC-INV-00012-4SESS",
+      "legacyStudentId": "SY001",
+      "packageName": "4 Sessions",
+      "sessionsRemaining": 3,
+      "validUntil": "2026-11-30",
+      "legacyInvoiceNumber": "INV-00012"
+    },
+    {
+      "legacyLotId": "CC-INV-00015-10SESS",
+      "legacyStudentId": "SY002",
+      "packageName": "10 Sessions",
+      "sessionsRemaining": 7,
+      "validUntil": null,
+      "legacyInvoiceNumber": "INV-00015"
+    }
+  ],
+  "moneyCredits": [{ "legacyStudentId": "SY002", "cents": 4550 }],
+  "expected": { "students": 2, "sessions": 10, "moneyCreditCents": 4550 }
+}

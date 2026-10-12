@@ -284,6 +284,9 @@ select:focus {
 .table tbody tr:hover {
   background: var(--color-row-hover);
 }
+.table tr.muted-row td {
+  color: var(--color-muted);
+}
 .table tr.cancelled td {
   color: var(--color-muted);
   text-decoration: line-through;

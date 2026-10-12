@@ -6,3 +6,4 @@ export * from './rrule';
 export * from './paynow';
 export * from './reports';
 export * from './branding';
+export * from './studentImport';

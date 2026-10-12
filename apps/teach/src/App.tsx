@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-route
 import { Layout } from './Layout';
 import { Calendar } from './pages/Calendar';
 import { Dashboard } from './pages/Dashboard';
+import { ImportStudents } from './pages/ImportStudents';
 import { Packages } from './pages/Packages';
 import { Reports } from './pages/Reports';
 import { Settings } from './pages/Settings';
@@ -56,6 +57,7 @@ export function App() {
             <Route index element={<Dashboard />} />
             <Route path="calendar" element={<Calendar />} />
             <Route path="students" element={<Students />} />
+            <Route path="students/import" element={<ImportStudents />} />
             <Route path="students/:studentId" element={<StudentDetail />} />
             <Route path="lessons" element={<Lessons />} />
             <Route path="lessons/:lessonId" element={<LessonDetail />} />

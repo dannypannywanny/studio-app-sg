@@ -16,6 +16,8 @@ serviceAccountKey*.json
 # Student data never goes in git (PDPA). Exports, staging and raw migration pulls stay local.
 *.csv
 !replica/features.csv
+# Synthetic test fixtures only (made-up people; headers copied from the export, nothing else).
+!functions/test/fixtures/*.synthetic.csv
 data/
 migration/raw/
 

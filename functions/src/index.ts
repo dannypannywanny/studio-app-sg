@@ -15,6 +15,7 @@ import * as attendance from './attendance';
 import * as credits from './credits';
 import * as lessons from './lessons';
 import * as invoicePdf from './invoicePdf';
+import * as importing from './importStudents';
 import * as jobs from './jobs';
 import * as members from './members';
 import * as money from './money';
@@ -277,4 +278,32 @@ export const adjustCredits = onCall(async (req) => {
   const input = parse(AdjustCredits, req.data);
   const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
   return jobs.adjustCredits(db(), input, actor);
+});
+
+const Candidate = z.object({
+  row: z.number().int().min(1),
+  legacyId: z.string().max(64).nullable(),
+  firstName: z.string().max(80),
+  lastName: z.string().max(80),
+  email: z.email().nullable(),
+  phone: z.string().regex(/^\+\d{8,15}$/).nullable(),
+  phoneRaw: z.string().max(64),
+  status: z.enum(['active', 'inactive']),
+  createdOn: z.string().max(10).nullable(),
+  referralSource: z.string().max(200).nullable(),
+  signupSource: z.string().max(200).nullable(),
+  note: z.string().max(2000).nullable(),
+  issues: z.array(z.string()).max(10),
+});
+
+const ImportStudents = z.object({
+  schoolId: id,
+  rows: z.array(Candidate).min(1).max(importing.MAX_IMPORT_ROWS),
+  excludeEmails: z.array(z.string().max(200)).max(20).optional(),
+});
+
+export const importStudents = onCall(async (req) => {
+  const input = parse(ImportStudents, req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
+  return importing.importStudents(db(), input as importing.ImportStudentsInput, actor);
 });

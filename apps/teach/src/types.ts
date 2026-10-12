@@ -50,6 +50,7 @@ export interface Student {
   email?: string;
   phone?: string;
   status: StudentStatus;
+  legacyId?: string | null;
   summary?: Partial<StudentSummary> & { outstandingCents?: number; moneyCreditCents?: number };
   createdAt?: Ts;
 }

@@ -1,0 +1,156 @@
+// Migration from Classcard: opening balances. Credits per enrolment ("lot") and money credit, as read
+// from Classcard (MCP, read-only, plus Daniel's reads of each student's Enrollments panel), arrive as
+// an OpeningBalances file in migration/raw/ (never in git). Each lot becomes a `migrate` grant on a new
+// lot; money credit becomes a `migrate` moneyLedger entry. Idempotent per legacy lot / student, so a
+// re-run after fixing the file only adds what is missing.
+import { Timestamp, type Firestore } from 'firebase-admin/firestore';
+import { NO_EXPIRY, wallClockToUtc } from '@lessonkaki/shared';
+import { CreditTx } from './creditTx';
+import { audit, now, schoolRef, type Actor } from './db';
+
+export interface OpeningLot {
+  /** Stable id for the Classcard enrolment (e.g. its invoice number + package). */
+  legacyLotId: string;
+  legacyStudentId: string;
+  packageName: string;
+  sessionsRemaining: number;
+  /** 'YYYY-MM-DD' (last valid day, school time) or null for no expiry. */
+  validUntil: string | null;
+  legacyInvoiceNumber: string | null;
+}
+
+export interface OpeningBalances {
+  /** Where the numbers came from, kept in the audit log. */
+  source: string;
+  lots: OpeningLot[];
+  moneyCredits: { legacyStudentId: string; cents: number }[];
+  /** Totals from Classcard, checked after applying. */
+  expected: MigrationTotals;
+}
+
+export interface MigrationTotals {
+  students: number;
+  sessions: number;
+  moneyCreditCents: number;
+}
+
+export async function applyOpeningBalances(
+  db: Firestore,
+  schoolId: string,
+  balances: OpeningBalances,
+  actor: Actor,
+  at: Date = new Date(),
+): Promise<{ lotsCreated: number; moneyCreditsCreated: number; unknownStudents: string[] }> {
+  const school = schoolRef(db, schoolId);
+  const tz = ((await school.get()).get('timezone') as string | undefined) ?? 'Asia/Singapore';
+  const students = await school.collection('students').where('legacyId', '!=', null).get();
+  const byLegacy = new Map(students.docs.map((d) => [d.get('legacyId') as string, d.id]));
+  const unknown = new Set<string>();
+  let lotsCreated = 0;
+  let moneyCreditsCreated = 0;
+
+  for (const lot of balances.lots) {
+    const studentId = byLegacy.get(lot.legacyStudentId);
+    if (!studentId) {
+      unknown.add(lot.legacyStudentId);
+      continue;
+    }
+    if (!Number.isInteger(lot.sessionsRemaining) || lot.sessionsRemaining <= 0) continue;
+    const created = await db.runTransaction(async (tx) => {
+      const idem = school.collection('idempotency').doc(`migrateLot_${lot.legacyLotId}`);
+      if ((await tx.get(idem)).exists) return false;
+      const ct = new CreditTx(tx, school, actor, at);
+      // Valid through the end of the last day, in the school's zone.
+      const validUntil = lot.validUntil ? Timestamp.fromDate(new Date(wallClockToUtc(lot.validUntil, '23:59', tz).getTime() + 59_999)) : Timestamp.fromDate(NO_EXPIRY);
+      ct.newLot(
+        school.collection('enrolments').doc(),
+        {
+          studentId,
+          packageId: null,
+          packageName: lot.packageName,
+          invoiceId: null,
+          legacyId: lot.legacyLotId,
+          legacyInvoiceNumber: lot.legacyInvoiceNumber,
+          validFrom: Timestamp.fromDate(at),
+          validUntil,
+        },
+        lot.sessionsRemaining,
+        { type: 'migrate', reason: `Opening balance from Classcard (${balances.source})`, idempotencyKey: `migrateLot:${lot.legacyLotId}` },
+      );
+      ct.flush();
+      tx.create(idem, { legacyLotId: lot.legacyLotId, studentId, createdAt: now() });
+      return true;
+    });
+    if (created) lotsCreated += 1;
+  }
+
+  for (const m of balances.moneyCredits) {
+    const studentId = byLegacy.get(m.legacyStudentId);
+    if (!studentId) {
+      unknown.add(m.legacyStudentId);
+      continue;
+    }
+    if (!Number.isInteger(m.cents) || m.cents <= 0) continue;
+    const created = await db.runTransaction(async (tx) => {
+      const idem = school.collection('idempotency').doc(`migrateMoney_${m.legacyStudentId}`);
+      if ((await tx.get(idem)).exists) return false;
+      const ct = new CreditTx(tx, school, actor, at);
+      tx.create(school.collection('moneyLedger').doc(), {
+        studentId,
+        deltaCents: m.cents,
+        type: 'migrate',
+        invoiceId: null,
+        paymentId: null,
+        creditNoteId: null,
+        reason: `Opening money credit from Classcard (${balances.source})`,
+        actorUid: actor.uid,
+        idempotencyKey: `migrateMoney:${m.legacyStudentId}`,
+        createdAt: now(),
+      });
+      ct.bump(studentId, { moneyCreditCents: m.cents });
+      ct.flush();
+      tx.create(idem, { legacyStudentId: m.legacyStudentId, studentId, createdAt: now() });
+      return true;
+    });
+    if (created) moneyCreditsCreated += 1;
+  }
+
+  await db.runTransaction(async (tx) => {
+    audit(tx, school, actor, 'applyOpeningBalances', 'migration', {
+      source: balances.source,
+      lotsCreated,
+      moneyCreditsCreated,
+      unknownStudents: [...unknown],
+    });
+  });
+  return { lotsCreated, moneyCreditsCreated, unknownStudents: [...unknown] };
+}
+
+/** What the migration put in, summed, compared with Classcard's totals. */
+export async function validateMigration(
+  db: Firestore,
+  schoolId: string,
+  expected: MigrationTotals,
+): Promise<{ ok: boolean; actual: MigrationTotals; diffs: string[] }> {
+  const school = schoolRef(db, schoolId);
+  const [ledger, money] = await Promise.all([
+    school.collection('ledger').where('type', '==', 'migrate').get(),
+    school.collection('moneyLedger').where('type', '==', 'migrate').get(),
+  ]);
+  const students = new Set<string>();
+  let sessions = 0;
+  for (const e of ledger.docs) {
+    students.add(e.get('studentId') as string);
+    sessions += e.get('delta') as number;
+  }
+  let moneyCreditCents = 0;
+  for (const m of money.docs) {
+    students.add(m.get('studentId') as string);
+    moneyCreditCents += m.get('deltaCents') as number;
+  }
+  const actual = { students: students.size, sessions, moneyCreditCents };
+  const diffs = (Object.keys(expected) as (keyof MigrationTotals)[])
+    .filter((k) => expected[k] !== actual[k])
+    .map((k) => `${k}: expected ${expected[k]}, found ${actual[k]}`);
+  return { ok: diffs.length === 0, actual, diffs };
+}

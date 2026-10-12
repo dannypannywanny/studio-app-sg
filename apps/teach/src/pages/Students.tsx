@@ -86,9 +86,14 @@ export function Students() {
       <div className="page-head">
         <h1>Students</h1>
         {!adding && (
-          <button className="btn btn-primary" onClick={() => setAdding(true)}>
-            New student
-          </button>
+          <div className="row">
+            <Link className="btn" to="/students/import">
+              Import CSV
+            </Link>
+            <button className="btn btn-primary" onClick={() => setAdding(true)}>
+              New student
+            </button>
+          </div>
         )}
       </div>
       {adding && <NewStudentForm onDone={() => setAdding(false)} />}
