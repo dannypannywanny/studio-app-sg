@@ -64,9 +64,11 @@ afterAll(async () => {
 });
 
 const as = (uid: string, claims: Record<string, unknown>) => env.authenticatedContext(uid, claims).firestore();
-const owner = () => as(`owner-${A}`, { r: { [A]: 'owner' } });
-const admin = () => as('admin-a', { r: { [A]: 'admin' } });
-const teacher = () => as('teacher-a', { r: { [A]: 'teacher' }, t: { [A]: 't1' } });
+// Staff sign in with a second factor (TOTP); tokens carry it as firebase.sign_in_second_factor.
+const TOTP = { firebase: { sign_in_provider: 'password', sign_in_second_factor: 'totp' } };
+const owner = () => as(`owner-${A}`, { r: { [A]: 'owner' }, ...TOTP });
+const admin = () => as('admin-a', { r: { [A]: 'admin' }, ...TOTP });
+const teacher = () => as('teacher-a', { r: { [A]: 'teacher' }, t: { [A]: 't1' }, ...TOTP });
 const student = () => as('student-a', { r: { [A]: 'student' }, s: { [A]: 'stu1' } });
 const anon = () => env.unauthenticatedContext().firestore();
 
@@ -172,5 +174,25 @@ describe('storage', () => {
     await assertFails(getBytes(ref(env.authenticatedContext(`owner-${A}`, { r: { [A]: 'owner' } }).storage(), `schools/${A}/invoices/inv1.pdf`)));
     await assertFails(getBytes(ref(env.authenticatedContext('student-a', { r: { [A]: 'student' }, s: { [A]: 'stu1' } }).storage(), `schools/${A}/invoices/inv1.pdf`)));
     await assertFails(uploadString(ref(env.authenticatedContext(`owner-${A}`, { r: { [A]: 'owner' } }).storage(), `schools/${A}/x.pdf`), 'x'));
+  });
+});
+
+describe('staff second factor', () => {
+  it('staff without a second factor get nothing, even their own school', async () => {
+    const noMfa = as(`owner-${A}`, { r: { [A]: 'owner' } });
+    await assertFails(getDoc(doc(noMfa, `schools/${A}`)));
+    await assertFails(getDoc(doc(noMfa, `schools/${A}/students/stu1`)));
+    await assertFails(setDoc(doc(noMfa, `schools/${A}/subjects/x`), { name: 'x' }));
+    const teacherNoMfa = as('teacher-a', { r: { [A]: 'teacher' }, t: { [A]: 't1' } });
+    await assertFails(getDoc(doc(teacherNoMfa, `schools/${A}/teachers/t1`)));
+  });
+
+  it('the emulator-only devNoMfa claim stands in for the second factor', async () => {
+    const dev = as(`owner-${A}`, { r: { [A]: 'owner' }, devNoMfa: true });
+    await assertSucceeds(getDoc(doc(dev, `schools/${A}/students/stu1`)));
+  });
+
+  it('students do not need a second factor', async () => {
+    await assertSucceeds(getDoc(doc(student(), `schools/${A}/students/stu1`)));
   });
 });

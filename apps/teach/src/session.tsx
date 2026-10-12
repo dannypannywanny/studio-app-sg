@@ -11,9 +11,11 @@ export interface Session {
   schoolId: string | null;
   role: Role | null;
   teacherId: string | null;
+  /** This sign-in passed a second factor (or the account is an emulator-only devNoMfa exemption). */
+  secondFactor: boolean;
 }
 
-const signedOut: Session = { ready: true, user: null, claims: {}, schoolId: null, role: null, teacherId: null };
+const signedOut: Session = { ready: true, user: null, claims: {}, schoolId: null, role: null, teacherId: null, secondFactor: false };
 const SessionContext = createContext<Session>({ ...signedOut, ready: false });
 
 export function SessionProvider({ children }: { children: ReactNode }) {
@@ -25,6 +27,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (!user) return setSession(signedOut);
         const token = await user.getIdTokenResult();
         const claims: Claims = { r: token.claims.r as Claims['r'], t: token.claims.t as Claims['t'] };
+        const secondFactor = Boolean(token.signInSecondFactor) || token.claims.devNoMfa === true;
         const schoolId = Object.entries(claims.r ?? {}).find(([, role]) => role !== 'student')?.[0] ?? null;
         setSession({
           ready: true,
@@ -33,6 +36,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           schoolId,
           role: schoolId ? (claims.r?.[schoolId] ?? null) : null,
           teacherId: schoolId ? (claims.t?.[schoolId] ?? null) : null,
+          secondFactor,
         });
       }),
     [],

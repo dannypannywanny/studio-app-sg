@@ -65,6 +65,16 @@ export const setMemberRole = onCall(async (req) => {
   return members.setMemberRole(db(), getAuth(), input, actor);
 });
 
+const ResetSecondFactor = z.object({ schoolId: id, uid: z.string().min(1).max(128) });
+
+export const resetSecondFactor = onCall(async (req) => {
+  const input = parse(ResetSecondFactor, req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner']);
+  if (input.uid === actor.uid) throw new HttpsError('failed-precondition', 'Owners cannot reset their own two-step sign-in');
+  await members.resetSecondFactor(db(), getAuth(), input.schoolId, input.uid, actor);
+  return { ok: true };
+});
+
 const CreateLesson = z.object({
   schoolId: id,
   teacherId: id,

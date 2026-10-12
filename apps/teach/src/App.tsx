@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { roleNeedsMfa } from '@lessonkaki/shared';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router';
 import { Layout } from './Layout';
 import { Calendar } from './pages/Calendar';
@@ -11,6 +12,7 @@ import { Staff } from './pages/Staff';
 import { InvoiceDetail } from './pages/InvoiceDetail';
 import { Invoices } from './pages/Invoices';
 import { FinishSignIn } from './pages/FinishSignIn';
+import { TwoStepSetup } from './pages/TwoStep';
 import { LessonDetail } from './pages/LessonDetail';
 import { Lessons } from './pages/Lessons';
 import { SignIn } from './pages/SignIn';
@@ -20,7 +22,7 @@ import { SessionProvider, useSession } from './session';
 import { auth } from './firebase';
 
 function RequireStaff({ children }: { children: ReactNode }) {
-  const { ready, user, schoolId } = useSession();
+  const { ready, user, schoolId, role, secondFactor } = useSession();
   const location = useLocation();
   if (!ready) return <p className="page-status">Loading…</p>;
   if (!user) return <Navigate to="/sign-in" replace state={{ from: location.pathname }} />;
@@ -37,6 +39,8 @@ function RequireStaff({ children }: { children: ReactNode }) {
       </div>
     );
   }
+  // Rules and functions refuse staff without a second factor, so set it up before loading anything.
+  if (role && roleNeedsMfa(role) && !secondFactor) return <TwoStepSetup user={user} />;
   return children;
 }
 

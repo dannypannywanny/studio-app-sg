@@ -31,6 +31,12 @@ async function findOrCreateUser(auth: Auth, input: SetMemberRoleInput): Promise<
   }
 }
 
+/** `demo-*` projects only exist in the emulator suite, never in production. */
+function isDemoProject(auth: Auth): boolean {
+  const projectId = auth.app.options.projectId ?? process.env.GCLOUD_PROJECT ?? '';
+  return projectId.startsWith('demo-');
+}
+
 /** Claims for one school are replaced; other schools' claims are kept. */
 export function mergeClaims(
   existing: Claims,
@@ -83,6 +89,7 @@ export async function setMemberRole(
 
   const user = await findOrCreateUser(auth, input);
   const claims = mergeClaims((user.customClaims ?? {}) as Claims, input.schoolId, input.role, teacherId, studentId);
+  if (isDemoProject(auth)) claims.devNoMfa = true; // the Auth emulator can't do TOTP
   if (JSON.stringify(claims).length > 900) {
     throw new HttpsError('resource-exhausted', 'Too many school memberships for one account');
   }
@@ -114,4 +121,22 @@ export async function setMemberRole(
   await batch.commit();
 
   return { uid: user.uid, claims };
+}
+
+/**
+ * Lost authenticator: removes the member's second factors and signs them out everywhere. On their next
+ * sign-in the app asks them to set up two-step sign-in again. Owner-only (checked in the callable).
+ */
+export async function resetSecondFactor(db: Firestore, auth: Auth, schoolId: string, uid: string, actor: Actor): Promise<void> {
+  const member = await schoolRef(db, schoolId).collection('members').doc(uid).get();
+  if (!member.exists) throw new HttpsError('not-found', 'Not a member of this school');
+  await auth.updateUser(uid, { multiFactor: { enrolledFactors: null } });
+  await auth.revokeRefreshTokens(uid);
+  await schoolRef(db, schoolId).collection('auditLog').add({
+    actorUid: actor.uid,
+    action: 'resetSecondFactor',
+    target: `members/${uid}`,
+    detail: {},
+    at: now(),
+  });
 }

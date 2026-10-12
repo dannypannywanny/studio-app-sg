@@ -13,7 +13,15 @@ export interface Claims {
   t?: Record<string, string>;
   /** linked student doc per school */
   s?: Record<string, string>;
+  /**
+   * Local emulator only: staff may skip the second factor (the Auth emulator has no TOTP).
+   * setMemberRole sets it only on `demo-*` projects, so production accounts never carry it.
+   */
+  devNoMfa?: true;
 }
+
+/** Everyone but students needs a second factor (TOTP) to act in a school. */
+export const roleNeedsMfa = (role: Role): boolean => role !== 'student';
 
 /**
  * Attendee status. `booked` is the unmarked state; "unmark" sets it back to `booked`.

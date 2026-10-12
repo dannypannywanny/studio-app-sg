@@ -584,3 +584,13 @@ input[type='color'] {
     overflow-x: auto;
   }
 }
+
+/* Two-step sign-in: the TOTP key for people who can't scan the QR code. */
+.secret-key {
+  display: block;
+  margin-top: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.08em;
+  word-break: break-all;
+  user-select: all;
+}

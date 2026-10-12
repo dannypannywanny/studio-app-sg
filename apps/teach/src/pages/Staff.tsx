@@ -18,6 +18,7 @@ const setMemberRole = call<
   { schoolId: string; uid?: string; email?: string; role: Role; teacherId?: string | null },
   { uid: string }
 >('setMemberRole');
+const resetSecondFactor = call<{ schoolId: string; uid: string }, { ok: true }>('resetSecondFactor');
 
 const ROLE_LABEL: Record<Role, string> = { owner: 'Owner', admin: 'Admin', teacher: 'Teacher', student: 'Student' };
 const ROLE_HELP: Record<'admin' | 'teacher', string> = {
@@ -123,6 +124,17 @@ export function Staff() {
     }
   }
 
+  async function resetTwoStep(m: Member & { id: string }) {
+    if (!window.confirm(`Reset two-step sign-in for ${m.email}? They are signed out and set it up again on their next sign-in.`)) return;
+    setError(null);
+    try {
+      await resetSecondFactor({ schoolId, uid: m.id });
+      setNotice(`Two-step sign-in reset for ${m.email}.`);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
   const toggleTeacher = (id: string, active: boolean) =>
     updateDoc(doc(db, 'schools', schoolId, 'teachers', id), { active, updatedAt: serverTimestamp() });
 
@@ -156,6 +168,7 @@ export function Staff() {
               <th>Email</th>
               <th>Role</th>
               <th>Teacher profile</th>
+              {isOwner && <th>Two-step sign-in</th>}
             </tr>
           </thead>
           <tbody>
@@ -176,6 +189,15 @@ export function Staff() {
                   )}
                 </td>
                 <td>{m.teacherId ? (teachers.byId.get(m.teacherId)?.displayName ?? '—') : '—'}</td>
+                {isOwner && (
+                  <td>
+                    {m.id !== user?.uid && (
+                      <button className="btn btn-sm btn-ghost" onClick={() => void resetTwoStep(m)}>
+                        Reset (lost phone)
+                      </button>
+                    )}
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

@@ -1,8 +1,9 @@
-import { isSignInWithEmailLink, signInWithEmailLink } from 'firebase/auth';
+import { isSignInWithEmailLink, signInWithEmailLink, type MultiFactorResolver } from 'firebase/auth';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { auth } from '../firebase';
 import { EMAIL_KEY } from './SignIn';
+import { SecondFactorPrompt, secondFactorResolver } from './TwoStep';
 
 export function FinishSignIn() {
   const navigate = useNavigate();
@@ -11,6 +12,7 @@ export function FinishSignIn() {
   const [email, setEmail] = useState(() => window.localStorage.getItem(EMAIL_KEY) ?? '');
   const [needEmail, setNeedEmail] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resolver, setResolver] = useState<MultiFactorResolver | null>(null);
   const started = useRef(false); // the link's code works once; StrictMode runs effects twice in dev
 
   async function finish(withEmail: string) {
@@ -19,6 +21,12 @@ export function FinishSignIn() {
       window.localStorage.removeItem(EMAIL_KEY);
       navigate('/', { replace: true });
     } catch (err) {
+      // Staff with two-step sign-in: the link was good, now the authenticator code.
+      const mfa = secondFactorResolver(err);
+      if (mfa) {
+        window.localStorage.removeItem(EMAIL_KEY);
+        return setResolver(mfa);
+      }
       setError((err as Error).message);
     }
   }
@@ -46,6 +54,15 @@ export function FinishSignIn() {
   function submit(e: FormEvent) {
     e.preventDefault();
     void finish(email.trim().toLowerCase());
+  }
+
+  if (resolver) {
+    return (
+      <div className="auth-card">
+        <h1>Two-step sign-in</h1>
+        <SecondFactorPrompt resolver={resolver} onDone={() => navigate('/', { replace: true })} />
+      </div>
+    );
   }
 
   return (

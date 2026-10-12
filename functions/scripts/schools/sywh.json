@@ -1,0 +1,30 @@
+{
+  "_note": "School #1 business profile for setup-school.ts. Business details only (all public on ACRA / the website); the owner's login email and the teacher's name are passed on the command line, never stored here.",
+  "schoolId": "sywh",
+  "name": "Sing Your Way Home",
+  "legalName": "Phoenix Ascend Pte. Ltd.",
+  "uen": "202514520H",
+  "paynowName": "Phoenix Ascend Pte. Ltd.",
+  "email": "hello@singyourwayhome.sg",
+  "address": "195 Pearl's Hill Terrace, #03-66, Singapore 168976",
+  "timezone": "Asia/Singapore",
+  "currency": "SGD",
+  "hosts": { "teach": "teach.singyourwayhome.sg", "learn": null },
+  "branding": {
+    "colors": {
+      "primary": "#6300E2",
+      "primaryHover": "#8E43F0",
+      "onPrimary": "#FFFFFF",
+      "accent": "#8693E1",
+      "text": "#150E1F",
+      "muted": "#584D66",
+      "background": "#F3F1F6",
+      "surface": "#FFFFFF"
+    },
+    "fonts": { "display": "Playfair Display", "body": "Roboto" },
+    "logoUrl": "https://class-app-sg-teach.web.app/schools/sywh/logo.webp",
+    "buttonRadius": 28,
+    "siteUrl": "https://singyourwayhome.sg"
+  },
+  "studioAddress": "195 Pearl's Hill Terrace, #03-66, Singapore 168976"
+}

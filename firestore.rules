@@ -1,13 +1,23 @@
 rules_version = '2';
 
 // LessonKaki Firestore rules. Covered by functions/test/rules.test.ts (emulator).
-// Claims: { r: { [schoolId]: role }, t: { [schoolId]: teacherId }, s: { [schoolId]: studentId } }
+// Claims: { r: { [schoolId]: role }, t: { [schoolId]: teacherId }, s: { [schoolId]: studentId }, devNoMfa? }
 // Money and credit collections are written only by Cloud Functions (Admin SDK bypasses rules).
 service cloud.firestore {
   match /databases/{database}/documents {
 
     function signedIn() { return request.auth != null; }
-    function role(s) { return signedIn() && request.auth.token.r != null ? request.auth.token.r[s] : null; }
+    // Staff roles (owner, admin, teacher) count only after a second factor (TOTP). devNoMfa is set by
+    // setMemberRole on demo-* (emulator) projects only, because the Auth emulator has no TOTP.
+    function secondFactor() {
+      let t = request.auth.token;
+      return t.get('firebase', {}).get('sign_in_second_factor', null) != null || t.get('devNoMfa', false) == true;
+    }
+    function claimedRole(s) { return signedIn() ? request.auth.token.get('r', {}).get(s, null) : null; }
+    function role(s) {
+      let r = claimedRole(s);
+      return r == null || r == 'student' || secondFactor() ? r : null;
+    }
     function isStaff(s) { return role(s) in ['owner', 'admin']; }
     function isOwner(s) { return role(s) == 'owner'; }
     function myTeacher(s) { return role(s) == 'teacher' ? request.auth.token.t[s] : null; }
