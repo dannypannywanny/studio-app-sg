@@ -4,19 +4,20 @@
 //
 //   pnpm --filter functions exec tsx scripts/migrate/apply-review.ts --file ../migration/raw/month-2026-10-actions.json [--apply]
 //
-// The file is a list of { lessonId, action: 'present' | 'cancel', reason? }. Only lessons that are still
+// The file is a list of { lessonId, action: 'present' | 'cancel' | 'studentCancel', reason? }: cancel is the
+// teacher's (whole lesson), studentCancel the student's (no credit used). Only lessons that are still
 // "booked" are touched, so a re-run, or a lesson marked by hand since, is left alone. Present is marked at
 // the lesson's own end time; a cancel is the teacher's (credit goes back if one was taken).
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { getFirestore, type Timestamp } from 'firebase-admin/firestore';
-import { cancelLesson, setAttendance } from '../../src/attendance';
+import { cancelAttendance, cancelLesson, setAttendance } from '../../src/attendance';
 import { argValue, initTarget } from '../target';
 
 interface Action {
   lessonId: string;
-  action: 'present' | 'cancel';
+  action: 'present' | 'cancel' | 'studentCancel';
   reason?: string;
 }
 
@@ -55,6 +56,9 @@ async function main() {
       const end = (snap.get('endAt') as Timestamp).toDate();
       await setAttendance(db, { schoolId, lessonId: a.lessonId, studentId, status: 'present' }, actor, end);
       done.marked += 1;
+    } else if (a.action === 'studentCancel') {
+      await cancelAttendance(db, { schoolId, lessonId: a.lessonId, studentId, mode: 'onTime' }, actor);
+      done.cancelled += 1;
     } else {
       await cancelLesson(db, { schoolId, lessonId: a.lessonId, reason: a.reason ?? 'Cancelled by teacher' }, actor);
       done.cancelled += 1;
