@@ -38,6 +38,25 @@
           "destination": "/index.html"
         }
       ]
+    },
+    {
+      "target": "default",
+      "public": "hosting/default",
+      "ignore": [
+        "firebase.json",
+        "**/.*"
+      ],
+      "headers": [
+        {
+          "source": "**",
+          "headers": [
+            {
+              "key": "X-Robots-Tag",
+              "value": "noindex"
+            }
+          ]
+        }
+      ]
     }
   ],
   "emulators": {

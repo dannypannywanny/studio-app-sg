@@ -5,8 +5,15 @@
   "targets": {
     "class-app-sg": {
       "hosting": {
-        "teach": ["class-app-sg-teach"],
-        "learn": ["class-app-sg-learn"]
+        "teach": [
+          "class-app-sg-teach"
+        ],
+        "learn": [
+          "class-app-sg-learn"
+        ],
+        "default": [
+          "class-app-sg"
+        ]
       }
     }
   }
