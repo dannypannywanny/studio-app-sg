@@ -137,6 +137,40 @@ describe('wholesale student import', () => {
   });
 });
 
+describe('opening balances for wholesale-imported students', () => {
+  it('finds students by export row (blank code) or by code, and refuses a code two students share', async () => {
+    const t = await school();
+    const all = mapClasscardRows(csvToObjects(fixture).rows);
+    await importStudents(db, { schoolId: t.schoolId, rows: all, wholesale: true }, owner);
+    const noCode = all.find((c) => c.issues.includes('duplicateLegacyId'))!; // its reused code is blanked
+    expect(noCode.legacyId).toBeNull();
+    const plain = all.find((c) => c.legacyId === 'SY001')!;
+    const lot = (id: string, who: string, n: number) => ({
+      legacyLotId: id, legacyStudentId: who, packageName: 'Migrated', sessionsRemaining: n, validUntil: null, legacyInvoiceNumber: null,
+    });
+    const res = await applyOpeningBalances(
+      db,
+      t.schoolId,
+      { source: 'test', lots: [lot('W1', `row:${noCode.row}`, 2), lot('W2', 'SY001', 3)], moneyCredits: [], expected: { students: 2, sessions: 5, moneyCreditCents: 0 } },
+      owner,
+    );
+    expect(res).toMatchObject({ lotsCreated: 2, unknownStudents: [] });
+    expect((await summary(t, `ccrow-${noCode.row}`)).sessionsAvailable).toBe(2);
+    expect((await summary(t, `ccrow-${plain.row}`)).sessionsAvailable).toBe(3);
+
+    // A second student carrying SY002 makes that code ambiguous: refused, nothing granted.
+    await db.doc(`schools/${t.schoolId}/students/dup-sy002`).set({ firstName: 'Dup', legacyId: 'SY002', summary: { sessionsAvailable: 0, sessionsOwed: 0 } });
+    const again = await applyOpeningBalances(
+      db,
+      t.schoolId,
+      { source: 'test', lots: [lot('W3', 'SY002', 1)], moneyCredits: [], expected: { students: 2, sessions: 5, moneyCreditCents: 0 } },
+      owner,
+    );
+    expect(again).toMatchObject({ lotsCreated: 0, unknownStudents: ['SY002'] });
+    await db.doc(`schools/${t.schoolId}/students/dup-sy002`).delete(); // keep the ledger invariant check clean
+  });
+});
+
 describe('checkOpeningBalances', () => {
   const ok: OpeningBalances = {
     source: 'test',

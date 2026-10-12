@@ -11,6 +11,7 @@ import { audit, now, schoolRef, type Actor } from './db';
 export interface OpeningLot {
   /** Stable id for the Classcard enrolment (e.g. its invoice number + package). */
   legacyLotId: string;
+  /** The Classcard code (legacyId), or `row:<n>` for a student imported wholesale from export row n. */
   legacyStudentId: string;
   packageName: string;
   sessionsRemaining: number;
@@ -80,8 +81,17 @@ export async function applyOpeningBalances(
   if (problems.length) throw new Error(`Opening balances file has problems:\n  ${problems.join('\n  ')}`);
   const school = schoolRef(db, schoolId);
   const tz = ((await school.get()).get('timezone') as string | undefined) ?? 'Asia/Singapore';
-  const students = await school.collection('students').where('legacyId', '!=', null).get();
-  const byLegacy = new Map(students.docs.map((d) => [d.get('legacyId') as string, d.id]));
+  // Students are found by Classcard code, or by export row (`row:<n>`) when the code is blank or shared.
+  const students = await school.collection('students').get();
+  const byLegacy = new Map<string, string>();
+  const shared = new Set<string>(); // a code two students carry can't say which one: use `row:<n>`
+  for (const d of students.docs) {
+    const code = d.get('legacyId') as string | null;
+    if (code && byLegacy.has(code)) shared.add(code);
+    else if (code) byLegacy.set(code, d.id);
+    if (typeof d.get('importRow') === 'number') byLegacy.set(`row:${d.get('importRow')}`, d.id);
+  }
+  for (const code of shared) byLegacy.delete(code);
   const unknown = new Set<string>();
   let lotsCreated = 0;
   let moneyCreditsCreated = 0;

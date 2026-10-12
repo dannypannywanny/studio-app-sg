@@ -7,8 +7,12 @@ Student data is personal data. The export and everything these scripts write sta
 `*.csv` (except `functions/test/fixtures/*.synthetic.csv`), `data/` and `migration/raw/` are gitignored.
 Classcard is only ever read (the `classcard` MCP connector is read-only; never write to it).
 
-Both scripts refuse to run unless `GCLOUD_PROJECT` is a `demo-*` project and `FIRESTORE_EMULATOR_HOST`
-is set. Running them against `class-app-sg` is part of M3 and needs a separate go-ahead.
+Scripts run against the emulator (a `demo-*` project with `FIRESTORE_EMULATOR_HOST` set) unless given an
+explicit `--project class-app-sg` (see `../target.ts`); production runs need a separate go-ahead.
+
+**What actually happened (M3, 2026-10-12):** Classcard was suspended before a parallel run, attendance was
+partly unmarked, and the API never exposed sessions left. So: students are imported **wholesale** (every
+export row as-is), and opening balances come from a sheet the owner fills in (section 2b).
 
 ## 1. Students (CSV export)
 
@@ -34,6 +38,13 @@ that now match an existing student (by legacyId, email or phone) are skipped.
 
 The same import is in the app (Students → Import CSV) with an on-screen review.
 
+Wholesale (every row exactly as exported, nothing skipped or merged; re-runs are safe):
+
+```sh
+pnpm --filter functions exec tsx scripts/migrate/import-students.ts --file <export.csv> --wholesale
+pnpm --filter functions exec tsx scripts/migrate/import-students.ts --apply   # follows the review's mode
+```
+
 ## 2. Opening balances
 
 Classcard's API doesn't expose sessions left per enrolment, so fill `migration/raw/opening-balances.json`
@@ -50,3 +61,18 @@ pnpm --filter functions exec tsx scripts/migrate/opening-balances.ts
 
 Each lot becomes a `migrate` grant on its own enrolment; money credit becomes a `migrate` moneyLedger
 entry. Idempotent per lot and per student. The script exits non-zero when the totals don't match.
+
+## 2b. Opening balances from the owner's sheet (used for M3)
+
+`migration/raw/classcard-activity.tsv` holds Classcard invoices since May 2025 (read via the MCP). Then:
+
+```sh
+pnpm --filter functions exec tsx scripts/migrate/balances-sheet.ts --make --export <export.csv>
+# fill sessionsLeft (every row, 0 if none), validUntil (YYYY-MM-DD or none), moneyCreditSGD (blank = 0)
+pnpm --filter functions exec tsx scripts/migrate/balances-sheet.ts --to-json
+pnpm --filter functions exec tsx scripts/migrate/opening-balances.ts            # emulator first
+```
+
+Rows are keyed by export row (`row:<n>`), so blank or shared Classcard codes work. `--to-json` refuses the
+sheet if any row is blank or malformed; `expected` is the sheet's own totals, and `validateMigration`
+checks the database against them.
