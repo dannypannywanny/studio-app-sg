@@ -24,6 +24,7 @@ import * as jobs from './jobs';
 import * as members from './members';
 import * as money from './money';
 import * as series from './series';
+import * as signInLinks from './signInLinks';
 
 initializeApp();
 setGlobalOptions({ region: 'asia-southeast1', maxInstances: 10 });
@@ -375,3 +376,22 @@ export const onAlertCreated = onDocumentCreated(
     await alerts.deliverAlert(db(), key ? alerts.resendSender(key) : null, schoolId, alertId, { defaultFrom: DEFAULT_ALERT_FROM });
   },
 );
+
+// Student sign-in links by email (learn site), sent with Resend from the school's own domain instead of
+// Firebase's noreply address. No sign-in needed to call it; it answers the same whoever asks.
+const SendSignInLink = z.object({ email: z.email().max(200) });
+
+export const sendSignInLink = onCall({ secrets: [RESEND_API_KEY] }, async (req) => {
+  const input = parse(SendSignInLink, req.data);
+  const origin = req.rawRequest.headers.origin;
+  if (!origin) throw new HttpsError('invalid-argument', 'Open the sign-in page in a browser');
+  const key = RESEND_API_KEY.value();
+  await signInLinks.sendSignInLink(
+    db(),
+    getAuth(),
+    key ? alerts.resendSender(key) : null,
+    { email: input.email, host: new URL(origin).hostname },
+    { defaultFrom: DEFAULT_ALERT_FROM },
+  );
+  return { ok: true };
+});

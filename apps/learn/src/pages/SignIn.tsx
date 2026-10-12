@@ -3,10 +3,14 @@ import { sendSignInLinkToEmail } from 'firebase/auth';
 import { useState, type FormEvent } from 'react';
 import { Navigate } from 'react-router';
 import { AuthShell } from '../components/AuthShell';
-import { AUTH_EMULATOR_URL, PROJECT_ID, auth, useEmulators } from '../firebase';
+import { AUTH_EMULATOR_URL, PROJECT_ID, auth, call, useEmulators } from '../firebase';
 import { useSession } from '../session';
 
 export const EMAIL_KEY = 'lk.learn.emailForSignIn';
+
+// Production: LessonKaki emails the link from the school's own domain (Firebase's sender lands in spam).
+// The emulator can't send email, so dev keeps Firebase's flow and its "open the link" button.
+const sendSignInLink = call<{ email: string }, { ok: true }>('sendSignInLink');
 
 /** Dev only: the auth emulator doesn't send email, it lists the links it would have sent. */
 async function latestEmulatorLink(email: string): Promise<string | null> {
@@ -39,14 +43,15 @@ export function SignIn() {
     setError(null);
     try {
       const clean = email.trim().toLowerCase();
-      await sendSignInLinkToEmail(auth, clean, { url: `${window.location.origin}/finish-signin`, handleCodeInApp: true });
+      if (useEmulators) await sendSignInLinkToEmail(auth, clean, { url: `${window.location.origin}/finish-signin`, handleCodeInApp: true });
+      else await sendSignInLink({ email: clean });
       remember(clean);
       setEmail(clean);
       setSent(true);
     } catch (err) {
       const code = (err as { code?: string }).code;
       setError(
-        code === 'auth/invalid-email'
+        code === 'auth/invalid-email' || code === 'functions/invalid-argument'
           ? 'That email address looks incomplete.'
           : code === 'auth/too-many-requests' || code === 'auth/quota-exceeded'
             ? 'Too many tries. Please wait a few minutes and try again.'
