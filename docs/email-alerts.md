@@ -70,18 +70,20 @@ Nothing below has been done yet.
 3. **Secret.** `firebase functions:secrets:set RESEND_API_KEY --project class-app-sg` and paste the key.
    It's stored as `RESEND_API_KEY`, not `resend-api-key`, because Firebase exposes secrets as environment
    variables. Do this **before the next functions deploy**: the deploy asks for the secret if it's missing.
-4. **Domain in Resend.** Add `singyourwayhome.sg` in Resend, region `ap-northeast-1` (Tokyo, the closest
-   to Singapore). Resend then shows these records to add at **SiteGround → Site Tools → Domain → DNS Zone Editor**:
+4. **Domain in Resend.** Add `singyourwayhome.sg` in Resend, region Tokyo (`ap-northeast-1`). As of
+   2026-10-13 Resend asks for these records (add them at **SiteGround → Site Tools → Domain → DNS Zone Editor**):
 
-   | type | host | value | priority |
-   | --- | --- | --- | --- |
-   | MX | `send` | `feedback-smtp.ap-northeast-1.amazonses.com` | 10 |
-   | TXT | `send` | `v=spf1 include:amazonses.com ~all` | |
-   | TXT | `resend._domainkey` | `p=MIGfMA0...` (the key Resend shows for this domain) | |
+   | type | host | value |
+   | --- | --- | --- |
+   | TXT | `@` (root) | `resend-domain-verification=...` (from Resend) |
+   | TXT | `resend._domainkey` | `p=MIGfMA0...` (the DKIM key Resend shows for this domain) |
+   | CNAME | `send` | `send.forge.rmta.net` |
+   | CNAME | `rsend` | `rsend-apne1.forge.rmta.net` |
 
-   These only add the `send.` subdomain (bounce handling and SPF for Resend) and a DKIM key. The root MX
-   (Google Workspace), the root SPF (`v=spf1 a mx include:_spf.elasticemail.com ~all`) and DMARC
-   (`v=DMARC1; p=none; aspf=r; adkim=r;`) stay as they are. Resend mail passes DMARC through the aligned DKIM key.
+   A CNAME can't share a name with other records, so `send` must have no MX or TXT of its own (Resend's
+   older setup used MX + TXT on `send`). The root MX (Google Workspace), root SPF
+   (`v=spf1 a mx include:_spf.elasticemail.com ~all`) and DMARC (`v=DMARC1; p=none; aspf=r; adkim=r;`)
+   stay as they are. Resend mail passes DMARC through the aligned DKIM key.
 5. **Sender.** Once Resend shows the domain as verified, set
    `schools/sywh.mail.from = "Sing Your Way Home <notifications@singyourwayhome.sg>"` (a one-line admin
    write, or add `mail` to `functions/scripts/schools/sywh.json` and re-run setup-school).
