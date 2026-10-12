@@ -14,6 +14,7 @@ import {
   type Branding,
   type CreditPolicy,
 } from '@lessonkaki/shared';
+import { BookingHours } from '../components/BookingHours';
 import { db } from '../firebase';
 import { useQuery, useSchool } from '../hooks';
 import { useSchoolId, useSession } from '../session';
@@ -406,6 +407,11 @@ export function Settings() {
         <AlertsForm settings={resolveAlertSettings(data.alerts, data.email)} canEdit={isOwner} />
         {(role === 'owner' || role === 'admin') && <RecentAlerts timeZone={data.timezone ?? 'Asia/Singapore'} />}
       </Section>
+      {(role === 'owner' || role === 'admin') && (
+        <Section title="Online booking hours" note="When students can book on the student portal. Times already taken by a lesson are never offered.">
+          <BookingHours />
+        </Section>
+      )}
       <Section title="Branding" note={ownerNote ?? 'Colours, fonts and logo for this school. Leave blank to use the LessonKaki defaults.'}>
         <BrandingForm branding={data.branding ?? {}} canEdit={isOwner} />
       </Section>

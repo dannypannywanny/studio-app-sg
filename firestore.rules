@@ -26,9 +26,11 @@ service cloud.firestore {
 
     match /publicSchools/{host} { allow read: if true; allow write: if false; }
 
-    // Collection-group reads of attendees (attendance report): staff of the attendee's school only.
+    // Collection-group reads of attendees: staff of the attendee's school (attendance report), and a
+    // student their own (the learn portal's lesson history).
     match /{path=**}/attendees/{attendeeId} {
-      allow read: if isStaff(resource.data.schoolId);
+      allow read: if isStaff(resource.data.schoolId)
+        || (myStudent(resource.data.schoolId) != null && resource.data.studentId == myStudent(resource.data.schoolId));
     }
 
     match /schools/{s} {

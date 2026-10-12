@@ -1,0 +1,7 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "learn", "runtimeExecutable": "pnpm", "runtimeArgs": ["dev:learn"], "port": 5174 },
+    { "name": "teach", "runtimeExecutable": "pnpm", "runtimeArgs": ["dev:teach"], "port": 5173 }
+  ]
+}

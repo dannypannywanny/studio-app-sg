@@ -149,9 +149,40 @@ async function main() {
     { uid: 'seed', role: 'system' },
   );
 
+  // Learn site: host lookup, public profile, synthetic booking hours, and Ada as a student login.
+  const learn = db.batch();
+  learn.set(db.collection('publicSchools').doc('localhost'), { schoolId: SCHOOL_ID, site: 'learn', updatedAt: ts });
+  learn.set(school.collection('public').doc('profile'), {
+    name: 'Sing Your Way Home',
+    logoUrl: '/schools/sywh/logo.webp',
+    siteUrl: 'https://singyourwayhome.sg',
+    contactEmail: 'hello@lessonkaki.test',
+    whatsapp: null,
+    teachers: { [TEACHER_ID]: { name: 'Studio Owner' } },
+    updatedAt: ts,
+  });
+  const weekday = { start: '10:00', end: '21:00', inPerson: true, online: true, locationId: 'studio' };
+  learn.set(school.collection('availability').doc(TEACHER_ID), {
+    weekly: [
+      ...(['MO', 'TU', 'WE', 'TH', 'FR'] as const).map((day) => ({ day, ...weekday })),
+      { day: 'SA', start: '10:00', end: '14:00', inPerson: false, online: true, locationId: null },
+    ],
+    exceptions: [],
+    lessonMin: 45,
+    stepMin: 30,
+    bufferMin: 15,
+    minNoticeHours: 12,
+    horizonDays: 28,
+    subjectId: 'voice',
+    updatedAt: ts,
+  });
+  await learn.commit();
+  await setMemberRole(db, auth, { schoolId: SCHOOL_ID, email: 'ada@lessonkaki.test', role: 'student', studentId: 'student-ada' }, { uid: 'seed', role: 'system' });
+
   console.log(`Seeded school "${SCHOOL_ID}" in ${projectId}.`);
   console.log(`Owner ${OWNER_EMAIL} (uid ${uid}) claims: ${JSON.stringify(claims)}`);
   console.log('Sign in with pnpm dev:teach (http://localhost:5173).');
+  console.log('Student ada@lessonkaki.test can sign in with pnpm dev:learn (http://localhost:5174).');
 }
 
 main().catch((err) => {

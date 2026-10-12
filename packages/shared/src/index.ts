@@ -9,3 +9,4 @@ export * from './branding';
 export * from './studentImport';
 export * from './authLinks';
 export * from './alerts';
+export * from './availability';

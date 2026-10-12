@@ -54,6 +54,8 @@ export function writeLesson(
   series: { seriesId: string; occurrenceDate: string } | null = null,
   /** Replace a doc being rewritten in the same transaction (a series edit) instead of creating it. */
   overwrite = false,
+  /** Who put the students on it: staff ('admin') or the student portal ('portal'). */
+  source: 'admin' | 'portal' = 'admin',
 ): void {
   const startTs = Timestamp.fromMillis(startMs);
   const put = (r: DocumentReference, data: FirebaseFirestore.DocumentData) => (overwrite ? tx.set(r, data) : tx.create(r, data));
@@ -78,7 +80,7 @@ export function writeLesson(
     updatedAt: now(),
   });
   for (const studentId of studentIds) {
-    put(ref.collection('attendees').doc(studentId), newAttendeeDoc(schoolId, ref.id, studentId, startTs));
+    put(ref.collection('attendees').doc(studentId), newAttendeeDoc(schoolId, ref.id, studentId, startTs, source));
   }
 }
 

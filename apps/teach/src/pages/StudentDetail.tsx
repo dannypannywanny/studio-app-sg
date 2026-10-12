@@ -2,6 +2,7 @@ import { collection, query, where } from 'firebase/firestore';
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { formatDate, formatMoney, type LedgerType } from '@lessonkaki/shared';
+import { PortalAccess } from '../components/PortalAccess';
 import { call, db } from '../firebase';
 import { studentName, useDoc, useFormatTs, useQuery, useTimeZone } from '../hooks';
 import { useSchoolId, useSession } from '../session';
@@ -224,6 +225,8 @@ export function StudentDetail() {
           <span className="tile-value">{formatMoney(s.summary?.moneyCreditCents ?? 0)}</span>
         </div>
       </div>
+
+      <PortalAccess studentId={studentId} hasLogin={Boolean((s as { uid?: string }).uid)} hasEmail={Boolean(s.email)} />
 
       <SellPackage studentId={studentId} />
 

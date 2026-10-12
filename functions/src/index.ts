@@ -10,14 +10,16 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { onDocumentCreated, onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { defineSecret } from 'firebase-functions/params';
 import { z } from 'zod';
-import { ROLES, WEEKDAYS, isWallDate, isWallTime } from '@lessonkaki/shared';
+import { LESSON_MODES, ROLES, WEEKDAYS, isWallDate, isWallTime } from '@lessonkaki/shared';
 import * as alerts from './alerts';
 import { requireRole } from './auth';
 import * as attendance from './attendance';
+import * as booking from './booking';
 import * as credits from './credits';
 import * as lessons from './lessons';
 import * as invoicePdf from './invoicePdf';
 import * as importing from './importStudents';
+import * as invites from './invites';
 import * as jobs from './jobs';
 import * as members from './members';
 import * as money from './money';
@@ -121,6 +123,41 @@ export const cancelAttendance = onCall(async (req) => {
   // Students may cancel their own lessons on time; the engine checks ownership and the cutoff.
   const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin', 'teacher', 'student']);
   return attendance.cancelAttendance(db(), input, actor);
+});
+
+// Student portal (learn site): who can sign in, open slots, and booking one.
+
+const InviteStudents = z.object({
+  schoolId: id,
+  studentIds: z.array(id).min(1).max(invites.MAX_INVITES),
+  dryRun: z.boolean().optional(),
+});
+
+export const inviteStudents = onCall(async (req) => {
+  const input = parse(InviteStudents, req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner']);
+  return { results: await invites.inviteStudents(db(), getAuth(), input, actor) };
+});
+
+const GetAvailability = z.object({ schoolId: id, teacherId: id.nullish() });
+
+export const getAvailability = onCall(async (req) => {
+  const input = parse(GetAvailability, req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin', 'student']);
+  return booking.getAvailability(db(), input, actor);
+});
+
+const BookLesson = z.object({
+  schoolId: id,
+  teacherId: id,
+  startAt: z.iso.datetime({ offset: true }),
+  mode: z.enum(LESSON_MODES),
+});
+
+export const bookLesson = onCall(async (req) => {
+  const input = parse(BookLesson, req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['student']);
+  return booking.bookLesson(db(), { ...input, startAt: new Date(input.startAt) }, actor);
 });
 
 const Attendee = z.object({ schoolId: id, lessonId: id, studentId: id });

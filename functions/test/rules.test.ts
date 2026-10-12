@@ -176,6 +176,27 @@ describe('student scoping', () => {
     await assertFails(getDocs(collection(student(), `schools/${A}/members`)));
   });
 
+  it("queries their own attendance across lessons (learn portal), nobody else's", async () => {
+    const mine = (s: string, studentId: string) =>
+      query(collectionGroup(student(), 'attendees'), where('schoolId', '==', s), where('studentId', '==', studentId));
+    await assertSucceeds(getDocs(mine(A, 'stu1')));
+    await assertFails(getDocs(mine(A, 'stu2')));
+    await assertFails(getDocs(mine(B, 'stu1')));
+    await assertFails(getDocs(query(collectionGroup(student(), 'attendees'), where('schoolId', '==', A))));
+    await assertFails(getDocs(query(collectionGroup(anon(), 'attendees'), where('schoolId', '==', A), where('studentId', '==', 'stu1'))));
+  });
+
+  it('reads booking hours but cannot change them or see booking locks', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), `schools/${A}/availability/t1`), { weekly: [] });
+      await setDoc(doc(ctx.firestore(), `schools/${A}/slotLocks/t1_20270104`), { teacherId: 't1' });
+    });
+    await assertSucceeds(getDoc(doc(student(), `schools/${A}/availability/t1`)));
+    await assertFails(setDoc(doc(student(), `schools/${A}/availability/t1`), { weekly: [] }));
+    await assertFails(getDoc(doc(student(), `schools/${A}/slotLocks/t1_20270104`)));
+    await assertFails(getDoc(doc(anon(), `schools/${A}/availability/t1`)));
+  });
+
   it('members can read their own membership only', async () => {
     await assertSucceeds(getDoc(doc(owner(), `schools/${A}/members/owner-${A}`)));
     await assertFails(getDoc(doc(student(), `schools/${A}/members/owner-${A}`)));

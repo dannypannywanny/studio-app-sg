@@ -1,0 +1,72 @@
+/* Learn site design tokens. Same language as singyourwayhome.sg (2026 rebuild): warm greys, ink,
+   one tan accent from the logo, Outfit for headings, Geist for text. Dials: variance 4, motion 3,
+   density 4 (a phone-first app, not a landing page).
+   Shape rule: anything you tap is a pill; cards are 20px; tags and small labels are 6px. */
+
+@font-face { font-family: "Outfit"; src: url("../assets/fonts/outfit-latin-var.woff2") format("woff2"); font-weight: 400 700; font-display: swap; }
+@font-face { font-family: "Geist"; src: url("../assets/fonts/geist-latin-var.woff2") format("woff2"); font-weight: 400 600; font-display: swap; }
+
+:root {
+  color-scheme: light;
+  --bg: #f4f4f2;
+  --surface: #eaeae6;
+  --raised: #fbfbf9;
+  --ink: #161616;
+  --ink-2: #55555a;
+  --line: #dadad5;
+  --tan: #c9ad92;
+  --tan-deep: #b99a7c;
+  --tan-soft: #e6dccf;
+  --on-tan: #161616;
+  --contrast-bg: #161616;
+  --contrast-fg: #f4f4f2;
+  --contrast-fg-2: #c4c3be;
+  --ok-bg: #e3ebdf; --ok-fg: #2f5a2c;
+  --warn-bg: #f4e2d6; --warn-fg: #8a3a12;
+  --due-bg: #efe4d3; --due-fg: #6b4a1d;
+  --muted-bg: #e4e4e0; --muted-fg: #55555a;
+  --danger: #a3361b;
+  --focus: #161616;
+  --grain-opacity: 0.035;
+  --grain-blend: multiply;
+  --font-display: "Outfit", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-body: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --r-pill: 999px; --r-card: 20px; --r-label: 6px;
+  --wrap: 720px;
+  --gutter: 16px;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --tabbar-h: 64px;
+  /* z-index scale: sticky bars, then the grain layer above everything (it ignores pointer events). */
+  --z-bar: 40; --z-skip: 70; --z-grain: 60;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #131313;
+    --surface: #1d1d1c;
+    --raised: #222221;
+    --ink: #ecebe7;
+    --ink-2: #a8a6a1;
+    --line: #2d2d2b;
+    --tan: #cdb398;
+    --tan-deep: #dcc6ae;
+    --tan-soft: #2a2520;
+    --on-tan: #161616;
+    --contrast-bg: #262320;
+    --contrast-fg: #ecebe7;
+    --contrast-fg-2: #b5b2ac;
+    --ok-bg: #22301f; --ok-fg: #a9cfa0;
+    --warn-bg: #3a2418; --warn-fg: #f0b392;
+    --due-bg: #33291c; --due-fg: #e5c79a;
+    --muted-bg: #262625; --muted-fg: #a8a6a1;
+    --danger: #f08a6c;
+    --focus: #ecebe7;
+    --grain-opacity: 0.05;
+    --grain-blend: screen;
+  }
+}
+
+@media (min-width: 640px) {
+  :root { --gutter: 24px; }
+}

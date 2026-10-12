@@ -1,0 +1,12 @@
+{
+  "_note": "Learn site profile for setup-learn.ts. Public business details only. Booking hours go under \"availability\" keyed by teacher id (owner-teacher = Daniel, piano-teacher = Allie), e.g. {\"weekly\": [{\"day\": \"MO\", \"start\": \"10:00\", \"end\": \"18:00\", \"inPerson\": true, \"online\": true, \"locationId\": \"studio\"}], \"lessonMin\": 45, \"stepMin\": 30, \"bufferMin\": 15, \"minNoticeHours\": 12, \"horizonDays\": 28}. Waiting for Daniel's hours.",
+  "schoolId": "sywh",
+  "hosts": ["class-app-sg-learn.web.app", "learn.singyourwayhome.sg"],
+  "profile": {
+    "name": "Sing Your Way Home",
+    "logoUrl": "/schools/sywh/logo.webp",
+    "siteUrl": "https://singyourwayhome.sg",
+    "contactEmail": "hello@singyourwayhome.sg",
+    "whatsapp": null
+  }
+}
