@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { CLASSCARD_STUDENT_HEADERS, csvToObjects, mapClasscardRows, planImport, summarisePlan } from '@lessonkaki/shared';
 import { importStudents } from '../src/importStudents';
-import { applyOpeningBalances, validateMigration, type OpeningBalances } from '../src/migrate';
+import { applyOpeningBalances, checkOpeningBalances, validateMigration, type OpeningBalances } from '../src/migrate';
 import { db, ledger, owner, summary, withInvariant, type TestSchool } from './helpers';
 
 const school = withInvariant();
@@ -106,5 +106,45 @@ describe('opening balances (migration)', () => {
     );
     expect(res.unknownStudents).toEqual(['NOPE']);
     expect(res.lotsCreated).toBe(0);
+  });
+});
+
+describe('checkOpeningBalances', () => {
+  const ok: OpeningBalances = {
+    source: 'test',
+    lots: [{ legacyLotId: 'L1', legacyStudentId: 'S1', packageName: '4 Sessions', sessionsRemaining: 3, validUntil: '2026-12-31', legacyInvoiceNumber: null }],
+    moneyCredits: [{ legacyStudentId: 'S1', cents: 0 }],
+    expected: { students: 1, sessions: 3, moneyCreditCents: 0 },
+  };
+
+  it('accepts a complete file (0 sessions and 0 cents are allowed)', () => {
+    expect(checkOpeningBalances(ok)).toEqual([]);
+    expect(checkOpeningBalances({ ...ok, lots: [{ ...ok.lots[0]!, sessionsRemaining: 0, validUntil: null }] })).toEqual([]);
+  });
+
+  it('refuses blanks, bad dates, duplicates and fractions instead of skipping them', () => {
+    const bad = {
+      ...ok,
+      lots: [
+        { ...ok.lots[0]!, sessionsRemaining: null as unknown as number },
+        { ...ok.lots[0]!, validUntil: '31/12/2026' },
+        { ...ok.lots[0]!, legacyLotId: 'L2', validUntil: 'TODO' },
+      ],
+      moneyCredits: [{ legacyStudentId: 'S1', cents: 12.5 }],
+      expected: { students: 1, sessions: -1, moneyCreditCents: 0 },
+    };
+    const problems = checkOpeningBalances(bad);
+    expect(problems.join('\n')).toMatch(/lots\[0\].*sessionsRemaining/);
+    expect(problems.join('\n')).toMatch(/lots\[1\].*used twice/);
+    expect(problems.join('\n')).toMatch(/lots\[1\].*validUntil/);
+    expect(problems.join('\n')).toMatch(/lots\[2\].*validUntil/);
+    expect(problems.join('\n')).toMatch(/moneyCredits\[0\].*cents/);
+    expect(problems.join('\n')).toMatch(/expected.sessions/);
+  });
+
+  it('applyOpeningBalances refuses a file with problems and writes nothing', async () => {
+    await expect(
+      applyOpeningBalances(db, 'no-such-school', { ...ok, lots: [{ ...ok.lots[0]!, sessionsRemaining: NaN }] }, owner),
+    ).rejects.toThrow(/problems/);
   });
 });

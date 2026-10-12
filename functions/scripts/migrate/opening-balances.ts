@@ -5,20 +5,19 @@
 //
 // The file follows opening-balances.example.json. Fill it from Classcard read-only: the classcard MCP
 // (list_students, list_invoices, list_packages) plus each active student's Enrollments panel for
-// sessions left and valid-till dates, which the API doesn't expose. Emulator (demo-*) only for now.
+// sessions left and valid-till dates, which the API doesn't expose. Emulator (demo-*) by default;
+// production only with an explicit `--project class-app-sg` (scripts/target.ts).
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { applyOpeningBalances, validateMigration, type OpeningBalances } from '../../src/migrate';
-import { assertEmulator } from './import-students';
+import { initTarget } from '../target';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
 async function main() {
-  const projectId = assertEmulator();
-  initializeApp({ projectId });
+  initTarget();
   const db = getFirestore();
   const i = process.argv.indexOf('--file');
   const file = i > 0 ? process.argv[i + 1]! : resolve(here, '../../../migration/raw/opening-balances.json');

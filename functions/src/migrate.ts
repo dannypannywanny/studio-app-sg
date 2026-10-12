@@ -34,6 +34,41 @@ export interface MigrationTotals {
   moneyCreditCents: number;
 }
 
+/**
+ * Everything wrong with a balances file, as readable lines (empty = OK). A blank or invalid entry must
+ * stop the whole run: applying would silently skip it, and the file is filled in by hand.
+ */
+export function checkOpeningBalances(b: OpeningBalances): string[] {
+  const problems: string[] = [];
+  const isDate = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`));
+  const count = (v: unknown) => Number.isInteger(v) && (v as number) >= 0;
+  const lotIds = new Set<string>();
+  (b.lots ?? []).forEach((lot, i) => {
+    const at = `lots[${i}]${lot.legacyLotId ? ` (${lot.legacyLotId})` : ''}`;
+    if (!lot.legacyLotId) problems.push(`${at}: legacyLotId is missing`);
+    else if (lotIds.has(lot.legacyLotId)) problems.push(`${at}: legacyLotId is used twice`);
+    else lotIds.add(lot.legacyLotId);
+    if (!lot.legacyStudentId) problems.push(`${at}: legacyStudentId is missing`);
+    if (!lot.packageName) problems.push(`${at}: packageName is missing`);
+    if (!count(lot.sessionsRemaining)) problems.push(`${at}: sessionsRemaining must be a whole number >= 0`);
+    if (lot.validUntil !== null && !(typeof lot.validUntil === 'string' && isDate(lot.validUntil))) {
+      problems.push(`${at}: validUntil must be YYYY-MM-DD or null (no expiry)`);
+    }
+  });
+  const moneyIds = new Set<string>();
+  (b.moneyCredits ?? []).forEach((m, i) => {
+    const at = `moneyCredits[${i}]${m.legacyStudentId ? ` (${m.legacyStudentId})` : ''}`;
+    if (!m.legacyStudentId) problems.push(`${at}: legacyStudentId is missing`);
+    else if (moneyIds.has(m.legacyStudentId)) problems.push(`${at}: student listed twice`);
+    else moneyIds.add(m.legacyStudentId);
+    if (!count(m.cents)) problems.push(`${at}: cents must be a whole number >= 0`);
+  });
+  for (const key of ['students', 'sessions', 'moneyCreditCents'] as const) {
+    if (!count(b.expected?.[key])) problems.push(`expected.${key} must be a whole number >= 0`);
+  }
+  return problems;
+}
+
 export async function applyOpeningBalances(
   db: Firestore,
   schoolId: string,
@@ -41,6 +76,8 @@ export async function applyOpeningBalances(
   actor: Actor,
   at: Date = new Date(),
 ): Promise<{ lotsCreated: number; moneyCreditsCreated: number; unknownStudents: string[] }> {
+  const problems = checkOpeningBalances(balances);
+  if (problems.length) throw new Error(`Opening balances file has problems:\n  ${problems.join('\n  ')}`);
   const school = schoolRef(db, schoolId);
   const tz = ((await school.get()).get('timezone') as string | undefined) ?? 'Asia/Singapore';
   const students = await school.collection('students').where('legacyId', '!=', null).get();

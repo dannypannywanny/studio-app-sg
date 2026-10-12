@@ -6,15 +6,15 @@
 //   Apply the reviewed rows ("create" rows of the review file; edit it to drop any):
 //     ... --review ../migration/raw/student-import-review.json --apply
 //
-// Emulator projects (demo-*) only. Pointing this at class-app-sg is M3 and needs approval first.
+// Emulator (demo-*) by default; production only with an explicit `--project class-app-sg` (scripts/target.ts).
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { csvToObjects, mapClasscardRows, planImport, summarisePlan, type ImportCandidate, type PlanRow } from '@lessonkaki/shared';
 import { importStudents } from '../../src/importStudents';
+import { initTarget } from '../target';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const RAW = resolve(here, '../../../migration/raw');
@@ -25,20 +25,8 @@ function arg(name: string): string | undefined {
 }
 const expand = (p: string) => resolve(p.replace(/^~(?=$|\/)/, homedir()));
 
-export function assertEmulator(): string {
-  const projectId = process.env.GCLOUD_PROJECT ?? 'demo-lessonkaki';
-  if (!projectId.startsWith('demo-') || !process.env.FIRESTORE_EMULATOR_HOST) {
-    throw new Error(
-      `Refusing to run against "${projectId}" (FIRESTORE_EMULATOR_HOST=${process.env.FIRESTORE_EMULATOR_HOST ?? 'unset'}). ` +
-        'Migration scripts only run against a demo-* emulator project until the M3 cutover is approved.',
-    );
-  }
-  return projectId;
-}
-
 async function main() {
-  const projectId = assertEmulator();
-  initializeApp({ projectId });
+  initTarget();
   const db = getFirestore();
   const schoolId = arg('school') ?? 'sywh';
   const exclude = (arg('exclude-email') ?? '').split(',').filter(Boolean);
@@ -74,7 +62,7 @@ async function main() {
   console.log(`Review written to ${out} (gitignored). Check it, then run again with --apply.`);
 }
 
-// Only when run directly (opening-balances.ts imports assertEmulator from here).
+// Only when run directly, so other scripts can import from this file without running it.
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   main().catch((err) => {
     console.error(err instanceof Error ? err.message : err);
