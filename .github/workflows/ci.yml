@@ -1,0 +1,57 @@
+# CI: lint, typecheck, tests (functions + rules against the emulators), builds.
+#
+# Manual trigger only, on purpose: it does not run on push or pull requests until you switch that on.
+# To enable later, add under `on:`
+#   push: { branches: [main] }
+#   pull_request:
+#
+# It never deploys and needs no secrets: everything runs against the demo-lessonkaki emulator project.
+name: CI
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.11.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # The Firebase emulators need Java 21+.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Firebase CLI (emulators)
+        run: npm install -g firebase-tools@15.20.0
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Tests (shared + functions + rules, on the emulators)
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build:functions && pnpm build:teach
+        env:
+          VITE_USE_EMULATORS: 'true'

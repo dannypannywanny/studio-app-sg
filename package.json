@@ -6,6 +6,7 @@
     "node": ">=22"
   },
   "scripts": {
+    "lint": "node scripts/lint.mjs",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
     "build:functions": "pnpm --filter functions build",
