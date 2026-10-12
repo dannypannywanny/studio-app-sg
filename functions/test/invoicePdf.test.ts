@@ -1,9 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { getStorage } from 'firebase-admin/storage';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDict, PDFDocument, PDFName } from 'pdf-lib';
 import { describe, expect, it } from 'vitest';
 import { hasValidCrc, parseTlv } from '@lessonkaki/shared';
-import { invoicePdfUrl, pdfPathFor, pdfSafe, renderAndStoreInvoicePdf, renderInvoicePdf, type PdfBucket } from '../src/invoicePdf';
+import {
+  invoicePdfUrl,
+  needsWideFont,
+  pdfPathFor,
+  pdfSafe,
+  renderAndStoreInvoicePdf,
+  renderInvoicePdf,
+  type InvoicePdfData,
+  type PdfBucket,
+} from '../src/invoicePdf';
 import { recordPayment } from '../src/money';
 import { db, owner, sell, withInvariant, type TestSchool } from './helpers';
 
@@ -50,6 +59,54 @@ describe('renderInvoicePdf', () => {
     expect(pdfSafe('José Ñúñez')).toBe('José Ñúñez');
     expect(pdfSafe('Chen 陈')).toBe('Chen ?');
     expect(pdfSafe('“quotes” – it’s…')).toBe(`"quotes" - it's...`);
+  });
+});
+
+describe('wide font (Chinese names)', () => {
+  const data = (studentName: string): InvoicePdfData => ({
+    school: { name: 'Test School', uen: UEN, timezone: 'Asia/Singapore' },
+    student: { name: studentName, email: null },
+    invoice: {
+      number: 'INV-00002',
+      currency: 'SGD',
+      status: 'paid',
+      issueDate: new Date('2026-10-01T02:00:00Z'),
+      dueDate: new Date('2026-10-08T02:00:00Z'),
+      lines: [{ desc: '4 Sessions', qty: 1, unitCents: 30000 }],
+      subtotalCents: 30000,
+      discountCents: 0,
+      totalCents: 30000,
+      paidCents: 30000,
+      pendingCents: 0,
+    },
+    payments: [],
+    paynow: null,
+  });
+  /** BaseFont names of every font in the PDF. */
+  const fonts = async (bytes: Uint8Array) => {
+    const doc = await PDFDocument.load(bytes);
+    return doc.context
+      .enumerateIndirectObjects()
+      .map(([, obj]) => obj)
+      .filter((obj): obj is PDFDict => obj instanceof PDFDict && obj.get(PDFName.of('Type')) === PDFName.of('Font'))
+      .map((f) => String(f.get(PDFName.of('BaseFont'))))
+      .join(' ');
+  };
+
+  it('knows which text Helvetica cannot draw', () => {
+    expect(needsWideFont('José Ñúñez “quoted” – ok…')).toBe(false);
+    expect(needsWideFont('Chen 陈小明')).toBe(true);
+    expect(needsWideFont('林')).toBe(true);
+  });
+
+  it('embeds a small Noto Sans SC subset only when a name needs it', async () => {
+    const cjk = await renderInvoicePdf(data('陈小明 Chen'));
+    expect(await fonts(cjk)).toMatch(/NotoSansSC/);
+    expect(await fonts(cjk)).toMatch(/Helvetica/); // everything else stays Helvetica
+    expect(cjk.length).toBeLessThan(80_000); // a subset, not the 10 MB font
+
+    const latin = await renderInvoicePdf(data('José Tan'));
+    expect(await fonts(latin)).not.toMatch(/NotoSansSC/);
   });
 });
 

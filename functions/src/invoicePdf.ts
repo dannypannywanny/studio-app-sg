@@ -4,7 +4,15 @@
 //
 // Re-rendered on every invoice write whose printable content changed (hash of the inputs), so writing
 // the PDF fields back onto the invoice doesn't loop.
+//
+// Text is Helvetica (a standard PDF font, nothing embedded). Strings Helvetica can't draw, such as
+// Chinese names, use Noto Sans SC (OFL, functions/assets/fonts), embedded only when the invoice needs it,
+// cut down by HarfBuzz to the characters the invoice uses (see fontSubset.ts).
 import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import fontkit from '@pdf-lib/fontkit';
+import { createSubsetter, type Subsetter } from './fontSubset';
 import type { Firestore } from 'firebase-admin/firestore';
 import { Timestamp } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
@@ -52,19 +60,55 @@ export interface InvoicePdfData {
 // Rendering
 // ---------------------------------------------------------------------------------------------
 
-/** Standard PDF fonts only encode WinAnsi; anything else (e.g. CJK names) becomes '?'. */
+/** Standard PDF fonts only encode WinAnsi; anything else (e.g. CJK names) needs the wide font. */
 const PUNCTUATION: Record<string, string> = { '‘': "'", '’': "'", '“': '"', '”': '"', '–': '-', '—': '-', '…': '...' };
 
+/** The character as Helvetica can draw it (accents stripped if need be), or null if it can't. */
+function toWinAnsi(ch: string): string | null {
+  const mapped = PUNCTUATION[ch] ?? ch;
+  const c = mapped.codePointAt(0)!;
+  if ((c >= 0x20 && c <= 0x7e) || (c >= 0xa0 && c <= 0xff)) return mapped;
+  return ch.normalize('NFKD').replace(/[^\x20-\x7e]/g, '') || null;
+}
+
 export function pdfSafe(text: string): string {
-  return [...text.normalize('NFC')]
-    .map((ch) => PUNCTUATION[ch] ?? ch)
-    .map((ch) => {
-      const c = ch.codePointAt(0)!;
-      if ((c >= 0x20 && c <= 0x7e) || (c >= 0xa0 && c <= 0xff)) return ch;
-      const base = ch.normalize('NFKD').replace(/[^\x20-\x7e]/g, '');
-      return base || '?';
-    })
-    .join('');
+  return [...text.normalize('NFC')].map((ch) => toWinAnsi(ch) ?? '?').join('');
+}
+
+/** True when Helvetica can't draw some of the text, even after pdfSafe's substitutions. */
+export function needsWideFont(text: string): boolean {
+  return [...text.normalize('NFC')].some((ch) => toWinAnsi(ch) === null);
+}
+
+// Resolved from the functions folder: the deploy root in Cloud Functions, and the cwd under `pnpm test`.
+export const WIDE_FONT_PATH = resolve(process.cwd(), 'assets/fonts/NotoSansSC-Regular.ttf');
+let wideSubsetter: Subsetter | null | undefined; // the 10 MB font is loaded once per instance
+
+function loadWideSubsetter(): Subsetter | null {
+  if (wideSubsetter === undefined) {
+    try {
+      wideSubsetter = createSubsetter(readFileSync(WIDE_FONT_PATH));
+    } catch (err) {
+      // Still render (names fall back to '?') rather than leave the invoice without a PDF.
+      console.warn(`invoicePdf: wide font unavailable (${WIDE_FONT_PATH}): ${(err as Error).message}`);
+      wideSubsetter = null;
+    }
+  }
+  return wideSubsetter;
+}
+
+/**
+ * Embeds the wide font cut down to the characters in `text`, with a drawable-text mapper for it
+ * (characters the font lacks become '?'). pdf-lib embeds the already-small font whole.
+ */
+async function embedWideFont(doc: PDFDocument, text: string): Promise<{ font: PDFFont; safe: (s: string) => string } | null> {
+  const subsetter = loadWideSubsetter();
+  if (!subsetter) return null;
+  doc.registerFontkit(fontkit);
+  const font = await doc.embedFont(subsetter.subset(text), { subset: false });
+  const has = new Set(font.getCharacterSet());
+  const safe = (s: string) => [...s.normalize('NFC')].map((ch) => (has.has(ch.codePointAt(0)!) ? ch : '?')).join('');
+  return { font, safe };
 }
 
 const METHOD: Record<string, string> = { paynow: 'PayNow', bank: 'Bank transfer', cash: 'Cash', card_hitpay: 'Card' };
@@ -85,10 +129,19 @@ export async function renderInvoicePdf(d: InvoicePdfData): Promise<Uint8Array> {
   const money = (c: number) => pdfSafe(formatMoney(c, d.invoice.currency));
   const date = (x: Date) => pdfSafe(formatDate(x, d.school.timezone));
 
-  const text = (p: PDFPage, s: string, x: number, y: number, size = 10, f: PDFFont = font, color = INK) =>
-    p.drawText(pdfSafe(s), { x, y, size, font: f, color });
-  const right = (p: PDFPage, s: string, xr: number, y: number, size = 10, f: PDFFont = font, color = INK) =>
-    text(p, s, xr - f.widthOfTextAtSize(pdfSafe(s), size), y, size, f, color);
+  const everything = JSON.stringify(d); // every string the PDF can print (JSON keeps non-ASCII as is)
+  const wide = needsWideFont(everything) ? await embedWideFont(doc, everything) : null;
+  // Each string picks its font: Helvetica when it can draw it, else the wide font (no bold weight).
+  const pick = (s: string, f: PDFFont): [string, PDFFont] =>
+    wide && needsWideFont(s) ? [wide.safe(s), wide.font] : [pdfSafe(s), f];
+  const text = (p: PDFPage, s: string, x: number, y: number, size = 10, f: PDFFont = font, color = INK) => {
+    const [str, use] = pick(s, f);
+    p.drawText(str, { x, y, size, font: use, color });
+  };
+  const right = (p: PDFPage, s: string, xr: number, y: number, size = 10, f: PDFFont = font, color = INK) => {
+    const [str, use] = pick(s, f);
+    text(p, s, xr - use.widthOfTextAtSize(str, size), y, size, f, color);
+  };
 
   // Header: school on the left, invoice facts on the right.
   let y = 790;

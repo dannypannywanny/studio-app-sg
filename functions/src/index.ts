@@ -247,7 +247,7 @@ export const markOverdue = onSchedule({ ...JOB, schedule: 'every day 08:00' }, a
 
 /** Keeps each invoice's PDF (and PayNow payload) current. Skips when nothing printable changed. */
 export const onInvoiceWritten = onDocumentWritten(
-  { document: 'schools/{schoolId}/invoices/{invoiceId}', region: 'asia-southeast1' },
+  { document: 'schools/{schoolId}/invoices/{invoiceId}', region: 'asia-southeast1', memory: '512MiB' },
   async (event) => {
     if (!event.data?.after.exists) return;
     const { schoolId, invoiceId } = event.params;
@@ -257,7 +257,10 @@ export const onInvoiceWritten = onDocumentWritten(
 
 const InvoiceRef = z.object({ schoolId: id, invoiceId: id });
 
-export const getInvoicePdfUrl = onCall(async (req) => {
+// Rendering may load the 10 MB CJK font into HarfBuzz (see fontSubset.ts), hence the extra memory.
+const PDF_MEMORY = '512MiB' as const;
+
+export const getInvoicePdfUrl = onCall({ memory: PDF_MEMORY }, async (req) => {
   const input = parse(InvoiceRef, req.data);
   const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin', 'student']);
   return invoicePdf.invoicePdfUrl(db(), bucket(), input, actor);
