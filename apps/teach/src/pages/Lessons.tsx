@@ -1,4 +1,4 @@
-import { collection, limit, orderBy, query } from 'firebase/firestore';
+import { collection, limit, orderBy, query, Timestamp, where } from 'firebase/firestore';
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { LessonForm } from '../components/LessonForm';
@@ -9,15 +9,33 @@ import type { Lesson } from '../types';
 
 const STATE_LABEL = { unmarked: 'Not marked', partial: 'Partly marked', marked: 'Marked' } as const;
 
+type Filter = 'all' | 'needsMarking';
+const FILTERS: [Filter, string][] = [
+  ['all', 'Latest'],
+  ['needsMarking', 'Past, not marked'],
+];
+
 export function Lessons() {
   const schoolId = useSchoolId();
   const fmt = useFormatTs();
   const students = useStudents();
   const teachers = useTeachers();
   const [adding, setAdding] = useState(false);
-  const lessons = useQuery<Lesson>(`lessons:${schoolId}`, () =>
-    query(collection(db, 'schools', schoolId, 'lessons'), orderBy('startAt', 'desc'), limit(100)),
+  const [filter, setFilter] = useState<Filter>('all');
+  // "Past, not marked": lessons that have happened and still need their attendance recorded, newest
+  // first. Cancelled lessons don't need marking.
+  const lessons = useQuery<Lesson>(`lessons:${schoolId}:${filter}`, () =>
+    filter === 'needsMarking'
+      ? query(
+          collection(db, 'schools', schoolId, 'lessons'),
+          where('attendanceState', 'in', ['unmarked', 'partial']),
+          where('startAt', '<', Timestamp.now()),
+          orderBy('startAt', 'desc'),
+          limit(300),
+        )
+      : query(collection(db, 'schools', schoolId, 'lessons'), orderBy('startAt', 'desc'), limit(100)),
   );
+  const rows = filter === 'needsMarking' ? lessons.data.filter((l) => l.status !== 'cancelled') : lessons.data;
 
   return (
     <section className="stack">
@@ -30,11 +48,19 @@ export function Lessons() {
         )}
       </div>
       {adding && <LessonForm onDone={() => setAdding(false)} />}
+      <div className="tabs" role="tablist">
+        {FILTERS.map(([k, label]) => (
+          <button key={k} role="tab" aria-selected={filter === k} className={`tab ${filter === k ? 'on' : ''}`} onClick={() => setFilter(k)}>
+            {label}
+            {k === 'needsMarking' && filter === k && !lessons.loading ? ` (${rows.length})` : ''}
+          </button>
+        ))}
+      </div>
       {lessons.error && <p className="error">{lessons.error.message}</p>}
       {lessons.loading ? (
         <p className="muted">Loading…</p>
-      ) : lessons.data.length === 0 ? (
-        <p className="empty">No lessons yet.</p>
+      ) : rows.length === 0 ? (
+        <p className="empty">{filter === 'needsMarking' ? 'Nothing to mark: every past lesson has its attendance.' : 'No lessons yet.'}</p>
       ) : (
         <table className="table">
           <thead>
@@ -47,7 +73,7 @@ export function Lessons() {
             </tr>
           </thead>
           <tbody>
-            {lessons.data.map((l) => (
+            {rows.map((l) => (
               <tr key={l.id} className={l.status === 'cancelled' ? 'cancelled' : ''}>
                 <td>
                   <Link to={`/lessons/${l.id}`}>{fmt(l.startAt)}</Link>

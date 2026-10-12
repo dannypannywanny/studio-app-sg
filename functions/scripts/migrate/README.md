@@ -76,3 +76,39 @@ pnpm --filter functions exec tsx scripts/migrate/opening-balances.ts            
 Rows are keyed by export row (`row:<n>`), so blank or shared Classcard codes work. `--to-json` refuses the
 sheet if any row is blank or malformed; `expected` is the sheet's own totals, and `validateMigration`
 checks the database against them.
+
+## 3. Lessons replay (balances from the ledger)
+
+Instead of a typed-in sheet, Classcard's history is replayed through the normal engine: one `migrate`
+lot per package, one lesson per real lesson, and lessons Classcard marked are marked present via
+`setAttendance`, so the credit engine debits lots exactly as it would have. What is left on the lots is
+the balance. "Not marked" past lessons stay booked (use Lessons → "Past, not marked" to mark them);
+future lessons stay upcoming. Expired packages are not carried over (`expireLots` runs at the end).
+
+Inputs, read from the classcard MCP (read-only) into `migration/raw/` (gitignored): `classcard-bookings-v2.tsv`,
+`booking-created.csv` (booking id → created time, the key that links a calendar event to its booking),
+`classcard-calendar.tsv`, `classcard-activity.tsv`, `classcard-invoice-ids.tsv`, `classcard-students.tsv`,
+`classcard-attendance.tsv`.
+
+```sh
+pnpm --filter functions exec tsx scripts/migrate/replay-lessons.ts --plan --export ~/Downloads/students-2026-09-23.csv
+#   counts only; writes replay-plan.json, open-invoices.json, replay-review.md
+pnpm --filter functions exec tsx scripts/migrate/replay-lessons.ts --apply              # emulator
+pnpm --filter functions exec tsx scripts/migrate/replay-lessons.ts --apply --project class-app-sg   # [APPROVAL]
+pnpm --filter functions exec tsx scripts/migrate/opening-balances.ts --file ../migration/raw/open-invoices.json   # the unpaid invoices
+```
+
+How it decides (see `src/replay.ts`):
+
+- **Event → student.** A calendar event and its booking were created in the same second; the booking
+  keeps the *original* lesson time, the calendar the actual one. Links by created second (+ start), then
+  start time, then created within 2 min; events without a booking take their student from their class.
+- **Package sizes.** Package rows (1-month 4-packs, promos) give size and validity. Otherwise by price
+  (`sessionsForPrice`), validity assumed (4 → 30 days, 12 → 90), never earlier than the last lesson booked
+  on it. Packages the data can't size use the number of lessons booked on them: listed in
+  `replay-review.md`; confirm with `--sizes <json>` (`{ "<invoiceId>": { "sessions": 12, "validUntil": "2026-12-31" } }`).
+- **Lessons Classcard shows as attended but on no student** (scheduled by hand, in person) are deducted
+  per student from Classcard's own attendance totals (`adjust` entries, oldest lot first).
+- **Idempotent.** Fixed ids (`cc-<eventId>`, `cc-<invoiceId>`), idempotency docs for lots and deductions.
+  A package whose size is corrected after the first run isn't resized: adjust it by hand.
+- Refuses a school that already has sheet opening-balance lots (double counting).
