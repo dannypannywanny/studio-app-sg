@@ -193,28 +193,6 @@
           "order": "ASCENDING"
         }
       ]
-    },
-    {
-      "collectionGroup": "attendees",
-      "queryScope": "COLLECTION_GROUP",
-      "fields": [
-        {
-          "fieldPath": "schoolId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "studentId",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "owed",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "lessonStartAt",
-          "order": "ASCENDING"
-        }
-      ]
     }
   ],
   "fieldOverrides": []

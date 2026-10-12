@@ -64,6 +64,16 @@ for (const f of files.filter((f) => /(^|\/)package\.json$/.test(f))) {
   }
 }
 
+// 6. Duplicate composite indexes: the emulator ignores them, but a production deploy fails with HTTP 409.
+{
+  const seen = new Map();
+  (JSON.parse(read('firestore.indexes.json') || '{}').indexes ?? []).forEach((ix, n) => {
+    const key = JSON.stringify([ix.collectionGroup, ix.queryScope, ix.fields]);
+    if (seen.has(key)) problems.push(`firestore.indexes.json: index ${n} duplicates index ${seen.get(key)} (deploy fails with 409)`);
+    else seen.set(key, n);
+  });
+}
+
 if (problems.length) {
   console.error(`lint: ${problems.length} problem${problems.length === 1 ? '' : 's'}\n  ${problems.join('\n  ')}`);
   process.exit(1);
