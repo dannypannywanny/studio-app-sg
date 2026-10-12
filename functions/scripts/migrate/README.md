@@ -112,3 +112,10 @@ How it decides (see `src/replay.ts`):
 - **Idempotent.** Fixed ids (`cc-<eventId>`, `cc-<invoiceId>`), idempotency docs for lots and deductions.
   A package whose size is corrected after the first run isn't resized: adjust it by hand.
 - Refuses a school that already has sheet opening-balance lots (double counting).
+
+**Reviewing a month** (`apply-review.ts`): the owner annotates `replay-months.xlsx`; a list of
+`{ lessonId, action: 'present' | 'cancel' }` is applied with `apply-review.ts --file <json> [--apply]`
+(only lessons still "booked" are touched). **Expiry vs. unmarked lessons** (`reopen-pending.ts`): a
+lot's leftover sessions expire with its date, but lessons booked inside that validity and not yet marked
+still need them; `reopenForPending` gives exactly that many back (oldest lesson first, lot kept alive 180
+days, owed lessons settled). `applyReplay` does this itself after expiring.

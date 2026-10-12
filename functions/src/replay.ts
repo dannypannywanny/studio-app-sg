@@ -8,7 +8,7 @@
 //
 // Classcard's bookings keep the ORIGINAL time of a lesson; its calendar has the actual (rescheduled)
 // time. The calendar is the truth for lessons, a booking says which student and invoice it was for.
-import { Timestamp, type Firestore } from 'firebase-admin/firestore';
+import { Timestamp, type DocumentSnapshot, type Firestore } from 'firebase-admin/firestore';
 import { NO_EXPIRY } from '@lessonkaki/shared';
 import { setAttendance } from './attendance';
 import { CreditTx } from './creditTx';
@@ -435,6 +435,8 @@ export interface ReplayResult {
   unlinkedShortfall: number;
   unknownStudents: string[];
   expired: { lots: number; sessions: number };
+  /** Sessions given back to expired lots for lessons still to be marked, and owed lessons settled. */
+  reopened: { sessions: number; settled: number };
 }
 
 type Item = { at: number; order: 0 | 1; lot?: ReplayLot; lesson?: ReplayLesson };
@@ -488,7 +490,7 @@ export async function applyReplay(
     if (docIdOf.has(lesson.studentKey)) push(lesson.studentKey, { at: ms(lesson.startUTC), order: 1, lesson });
   }
 
-  const result: ReplayResult = { lotsCreated: 0, lessonsCreated: 0, lessonsMarked: 0, unlinkedDeducted: 0, unlinkedShortfall: 0, unknownStudents: unknown, expired: { lots: 0, sessions: 0 } };
+  const result: ReplayResult = { lotsCreated: 0, lessonsCreated: 0, lessonsMarked: 0, unlinkedDeducted: 0, unlinkedShortfall: 0, unknownStudents: unknown, expired: { lots: 0, sessions: 0 }, reopened: { sessions: 0, settled: 0 } };
   const shape = (l: ReplayLesson) => ({
     teacherId: l.teacher === 'piano' ? opts.teacherIds.piano : opts.teacherIds.owner,
     subjectId: l.teacher === 'piano' ? opts.subjectIds.piano : opts.subjectIds.voice,
@@ -593,6 +595,8 @@ export async function applyReplay(
 
   // "Expired packages are not carried over": what is left on a lot past its date goes with it.
   result.expired = await expireLots(db, schoolId, at);
+  // ...except the sessions that lessons still booked (not yet marked) inside a lot's validity need.
+  result.reopened = await reopenForPending(db, schoolId, actor, at);
 
   await db.runTransaction(async (tx) => {
     audit(tx, school, actor, 'applyReplay', 'migration', {
@@ -613,4 +617,100 @@ export function planTotals(plan: ReplayPlan) {
     sessions: plan.lots.reduce((n, l) => n + l.sessions, 0),
     students: new Set(plan.lots.map((l) => l.studentKey)).size,
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Reopening
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * A lot's leftover sessions expire with its date, but a lesson booked inside that validity and not yet
+ * marked (the owner marks the past ones in review) still belongs to it. For each student, the oldest
+ * expired lots whose validity covers a still-booked past lesson (or a lesson marked present but owed)
+ * get that many sessions back, oldest lesson first: `adjust` entries, owed lessons settled onto them.
+ * A reopened lot lives `graceDays` more, so the nightly expiry doesn't take them again mid-review.
+ */
+export async function reopenForPending(
+  db: Firestore,
+  schoolId: string,
+  actor: Actor,
+  at: Date = new Date(),
+  opts: { graceDays?: number; dryRun?: boolean } = {},
+): Promise<{ sessions: number; settled: number }> {
+  const school = schoolRef(db, schoolId);
+  const graceUntil = Timestamp.fromMillis(at.getTime() + (opts.graceDays ?? 180) * DAY_MS);
+  const expired = await school.collection('enrolments').where('status', '==', 'expired').get();
+  const lotsByStudent = new Map<string, DocumentSnapshot[]>();
+  for (const d of expired.docs) {
+    if (((d.get('sessionsExpired') as number | undefined) ?? 0) > 0) {
+      const id = d.get('studentId') as string;
+      lotsByStudent.set(id, [...(lotsByStudent.get(id) ?? []), d]);
+    }
+  }
+  const total = { sessions: 0, settled: 0 };
+
+  for (const [studentId, lots] of lotsByStudent) {
+    const lessons = await school
+      .collection('lessons')
+      .where('studentIds', 'array-contains', studentId)
+      .where('startAt', '<', Timestamp.fromDate(at))
+      .get();
+    const demand: { start: number; lessonId: string; owed: boolean }[] = [];
+    for (const l of lessons.docs) {
+      if (l.get('status') === 'cancelled') continue;
+      const a = await l.ref.collection('attendees').doc(studentId).get();
+      const start = (l.get('startAt') as Timestamp).toMillis();
+      if (a.get('status') === 'booked') demand.push({ start, lessonId: l.id, owed: false });
+      else if (a.get('status') === 'present' && a.get('owed') === true) demand.push({ start, lessonId: l.id, owed: true });
+    }
+    if (!demand.length) continue;
+    demand.sort((a, b) => a.start - b.start);
+
+    const supply = lots
+      .map((d) => ({
+        d,
+        left: d.get('sessionsExpired') as number,
+        from: (d.get('validFrom') as Timestamp).toMillis(),
+        until: (d.get('validUntil') as Timestamp).toMillis(),
+        take: 0,
+        owedLessons: [] as string[],
+      }))
+      .sort((a, b) => a.until - b.until);
+    for (const dm of demand) {
+      const s = supply.find((x) => x.left > 0 && x.from <= dm.start && dm.start <= x.until);
+      if (!s) continue;
+      s.left -= 1;
+      s.take += 1;
+      if (dm.owed) s.owedLessons.push(dm.lessonId);
+    }
+
+    for (const s of supply.filter((x) => x.take > 0)) {
+      total.sessions += s.take;
+      total.settled += s.owedLessons.length;
+      if (opts.dryRun) continue;
+      await db.runTransaction(async (tx) => {
+        const lotSnap = await tx.get(s.d.ref);
+        if (lotSnap.get('status') !== 'expired' || ((lotSnap.get('sessionsExpired') as number) ?? 0) < s.take) return;
+        const owedSnaps = await Promise.all(s.owedLessons.map((id) => tx.get(school.collection('lessons').doc(id).collection('attendees').doc(studentId))));
+        const ct = new CreditTx(tx, school, actor, at);
+        const lot = ct.useLot(lotSnap);
+        lot.expired -= s.take;
+        lot.remaining += s.take;
+        lot.status = 'active';
+        ct.ledger({
+          studentId,
+          enrolmentId: lot.id,
+          type: 'adjust',
+          delta: s.take,
+          idempotencyKey: `reopen:${lot.id}:${at.getTime()}`,
+          reason: 'Lessons booked in this package are still to be marked (migration review)',
+        });
+        ct.bump(studentId, { sessionsAvailable: s.take });
+        if (owedSnaps.length) ct.settleOwed(lot, owedSnaps, `reopen:${lot.id}:${at.getTime()}`);
+        ct.flush();
+        tx.update(lot.ref, { validUntil: graceUntil });
+      });
+    }
+  }
+  return total;
 }

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { setAttendance } from '../src/attendance';
+import { expireLots } from '../src/jobs';
 import {
   applyReplay,
   linkEvents,
+  reopenForPending,
   planReplay,
   planTotals,
   promoSessions,
@@ -419,6 +421,61 @@ describe('applyReplay', () => {
     // 4 sessions: 1 placed + 2 unplaced used (the adjust shrinks the lot), 1 left expires; the new one is whole
     expect(first).toMatchObject({ sessionsUsed: 1, sessionsTotal: 2, sessionsExpired: 1, sessionsRemaining: 0, status: 'expired' });
     expect(await summary(t, 's10')).toEqual({ sessionsAvailable: 4, sessionsOwed: 0 });
+  });
+
+  it('keeps sessions for lessons still to be marked inside an expired package (and settles owed ones)', async () => {
+    const t = await replaySchool();
+    const plan = planReplay(
+      input({
+        invoices: [invoice({ invoiceId: '100', date: '2026-01-01', amountSGD: 300 })],
+        bookings: [
+          booking({ bookingId: 'b1', startUTC: '2026-01-05T08:00' }),
+          booking({ bookingId: 'b2', startUTC: '2026-01-12T08:00', createdUTC: '2026-01-02T00:00:00' }),
+          booking({ bookingId: 'b3', startUTC: '2026-01-19T08:00', createdUTC: '2026-01-03T00:00:00' }),
+        ],
+        events: [
+          event({ eventId: 'e1', startUTC: '2026-01-05T08:00', endUTC: '2026-01-05T08:45', marked: true }),
+          event({ eventId: 'e2', startUTC: '2026-01-12T08:00', endUTC: '2026-01-12T08:45', marked: false, createdUTC: '2026-01-02T00:00:00' }),
+          event({ eventId: 'e3', startUTC: '2026-01-19T08:00', endUTC: '2026-01-19T08:45', marked: false, createdUTC: '2026-01-03T00:00:00' }),
+        ],
+      }),
+    );
+    const res = await applyReplay(db, t.schoolId, plan, actor, opts);
+    // 4 sessions, 1 used, 3 would expire; 2 pending lessons are inside the validity: 2 given back
+    expect(res.expired).toEqual({ lots: 1, sessions: 3 });
+    expect(res.reopened).toEqual({ sessions: 2, settled: 0 });
+    const lotDoc = (await db.doc(`schools/${t.schoolId}/enrolments/cc-100`).get()).data()!;
+    expect(lotDoc).toMatchObject({ status: 'active', sessionsRemaining: 2, sessionsExpired: 1, sessionsUsed: 1 });
+    expect(await summary(t, 's10')).toEqual({ sessionsAvailable: 2, sessionsOwed: 0 });
+
+    // marking them now draws on the reopened lot
+    await setAttendance(db, { schoolId: t.schoolId, lessonId: 'cc-e2', studentId: 's10', status: 'present' }, owner);
+    await setAttendance(db, { schoolId: t.schoolId, lessonId: 'cc-e3', studentId: 's10', status: 'present' }, owner);
+    expect(await summary(t, 's10')).toEqual({ sessionsAvailable: 0, sessionsOwed: 0 });
+    // and the nightly expiry has nothing left to take
+    expect(await reopenForPending(db, t.schoolId, actor, new Date(NOW))).toEqual({ sessions: 0, settled: 0 });
+  });
+
+  it('settles a lesson that was marked after the grace period let its package expire again', async () => {
+    const t = await replaySchool();
+    const plan = planReplay(
+      input({
+        invoices: [invoice({ invoiceId: '100', date: '2026-01-01', amountSGD: 300 })],
+        bookings: [booking({ bookingId: 'b1', startUTC: '2026-01-05T08:00' })],
+        events: [event({ eventId: 'e1', startUTC: '2026-01-05T08:00', endUTC: '2026-01-05T08:45', marked: false })],
+      }),
+    );
+    await applyReplay(db, t.schoolId, plan, actor, opts);
+    expect((await db.doc(`schools/${t.schoolId}/enrolments/cc-100`).get()).get('sessionsRemaining')).toBe(1);
+
+    // the review didn't get to it before the grace period ended: the nightly expiry takes the session
+    const later = new Date(Date.parse(NOW) + 200 * 86_400_000);
+    expect(await expireLots(db, t.schoolId, later)).toEqual({ lots: 1, sessions: 1 });
+    await setAttendance(db, { schoolId: t.schoolId, lessonId: 'cc-e1', studentId: 's10', status: 'present' }, owner, later);
+    expect(await summary(t, 's10')).toEqual({ sessionsAvailable: 0, sessionsOwed: 1 });
+
+    expect(await reopenForPending(db, t.schoolId, actor, later)).toEqual({ sessions: 1, settled: 1 });
+    expect(await summary(t, 's10')).toEqual({ sessionsAvailable: 0, sessionsOwed: 0 });
   });
 
   it('leaves the real engine to take over: marking a replayed unmarked lesson debits as usual', async () => {
