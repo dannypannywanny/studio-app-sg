@@ -2,8 +2,9 @@ import { ArrowRight, CalendarBlank, CheckCircle, MapPin, VideoCamera } from '@ph
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { wallDateOf, type LessonMode } from '@lessonkaki/shared';
+import { MonthCalendar } from '../components/MonthCalendar';
 import { call, errorMessage } from '../firebase';
-import { dayLabel, longDayLabel, otherZone, timeLabel, timeRange, zoneName } from '../format';
+import { dayLabel, longDayLabel, otherZone, timeRange, zoneName } from '../format';
 import { useProfile, useStudent } from '../hooks';
 import { downloadIcs } from '../ics';
 import { useStudentIds } from '../session';
@@ -253,35 +254,20 @@ export function Book() {
           ) : (
             <>
               <section aria-label="Day">
-                <div className="daystrip" role="radiogroup" aria-label="Day">
-                  {[...days.entries()].map(([key, list]) => {
-                    const d = new Date(list[0]!.startAt);
-                    const parts = new Intl.DateTimeFormat('en-SG', { timeZone: tz, weekday: 'short', day: 'numeric', month: 'short' }).formatToParts(d);
-                    const part = (t: string) => parts.find((p) => p.type === t)?.value;
-                    return (
-                      <button
-                        key={key}
-                        type="button"
-                        role="radio"
-                        aria-checked={key === activeDay}
-                        aria-label={`${dayLabel(d, tz)}, ${list.length} ${list.length === 1 ? 'time' : 'times'}`}
-                        onClick={() => {
-                          setDay(key);
-                          setSlot(null);
-                        }}
-                      >
-                        <span className="ds-week">{part('weekday')}</span>
-                        <span className="ds-day">{part('day')}</span>
-                        <span className="ds-month">{part('month')}</span>
-                      </button>
-                    );
-                  })}
-                </div>
+                <MonthCalendar
+                  open={[...days.keys()]}
+                  selected={activeDay}
+                  today={wallDateOf(new Date(), tz)}
+                  onSelect={(key) => {
+                    setDay(key);
+                    setSlot(null);
+                  }}
+                />
               </section>
 
               <section aria-label="Time">
                 <h2 className="times-head">{activeDay && longDayLabel(new Date(times[0]!.startAt), tz)}</h2>
-                <div className="times" role="radiogroup" aria-label="Start time">
+                <div className="times" role="radiogroup" aria-label="Lesson time">
                   {times.map((s) => (
                     <button
                       key={s.startAt}
@@ -293,7 +279,7 @@ export function Book() {
                         setSlot(s);
                       }}
                     >
-                      {timeLabel(new Date(s.startAt), tz)}
+                      {timeRange(new Date(s.startAt), new Date(Date.parse(s.startAt) + teacher!.lessonMin * 60_000), tz)}
                     </button>
                   ))}
                 </div>

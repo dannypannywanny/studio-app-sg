@@ -1,5 +1,5 @@
 {
-  "_note": "Learn site profile for setup-learn.ts. Public business details and booking rules only. Daniel (2026-10-13): 45-min lessons back to back (no gap), last-minute booking and cancelling allowed, 28 days ahead, no cap on bookings. Weekly hours set 2026-10-13 from when Daniel actually taught since April (Mon-Thu evenings, Fri late afternoon, Sat/Sun afternoons). Edit them in teach (Settings > Online booking hours); re-running this script would put these back.",
+  "_note": "Learn site profile for setup-learn.ts. Public business details and booking rules only. Daniel (2026-10-13): 45-min lessons back to back in 45-min blocks (no gap), last-minute booking and cancelling allowed, 28 days ahead, no cap on bookings. Weekly hours set 2026-10-13 from when Daniel actually taught since April (Mon-Thu evenings, Fri late afternoon, Sat/Sun afternoons). Edit them in teach (Settings > Online booking hours); re-running this script would put these back.",
   "schoolId": "sywh",
   "hosts": [
     "class-app-sg-learn.web.app",
@@ -22,7 +22,7 @@
       "bookable": true,
       "subjectId": "voice",
       "lessonMin": 45,
-      "stepMin": 15,
+      "stepMin": 45,
       "bufferMin": 0,
       "minNoticeHours": 0,
       "horizonDays": 28,

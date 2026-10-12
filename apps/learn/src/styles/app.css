@@ -235,11 +235,26 @@ button { font: inherit; color: inherit; }
 .ds-week { font-size: 0.78rem; font-weight: 600; }
 .ds-day { font-family: var(--font-display); font-weight: 600; font-size: 1.45rem; }
 .ds-month { font-size: 0.72rem; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.05em; }
+.cal { background: var(--surface); border-radius: var(--r-card); padding: 14px 14px 18px; max-width: 420px; }
+.cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.cal-title { font-size: 1.1rem; }
+.cal-head .icon-btn:disabled { opacity: 0.3; cursor: default; background: none; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; text-align: center; }
+.cal-dow { font-size: 0.75rem; font-weight: 600; color: var(--ink-2); padding: 4px 0; }
+.cal-day {
+  aspect-ratio: 1; border: 0; border-radius: var(--r-pill); background: var(--raised); cursor: pointer;
+  font-weight: 600; font-variant-numeric: tabular-nums; transition: background-color 0.2s var(--ease);
+}
+.cal-day:hover:not(:disabled) { background: var(--tan-soft); }
+.cal-day:disabled { background: transparent; color: var(--ink-2); opacity: 0.45; font-weight: 400; cursor: default; }
+.cal-day.is-today { box-shadow: inset 0 0 0 1.5px var(--ink-2); }
+.cal-day[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
 .times-head { font-size: 1.05rem; margin-bottom: 12px; }
-.times { display: grid; grid-template-columns: repeat(auto-fill, minmax(98px, 1fr)); gap: 8px; }
+.times { display: grid; grid-template-columns: 1fr; gap: 8px; }
+@media (min-width: 560px) { .times { grid-template-columns: 1fr 1fr; } }
 .times button {
-  min-height: 48px; border-radius: var(--r-pill); border: 1.5px solid var(--line); background: var(--raised); cursor: pointer;
-  font-weight: 600; font-variant-numeric: tabular-nums; transition: border-color 0.2s var(--ease), background-color 0.2s var(--ease);
+  min-height: 52px; padding: 0 22px; text-align: left; border-radius: var(--r-pill); border: 1.5px solid var(--line); background: var(--raised); cursor: pointer;
+  font-weight: 600; font-size: 1.02rem; font-variant-numeric: tabular-nums; transition: border-color 0.2s var(--ease), background-color 0.2s var(--ease);
 }
 .times button:hover { border-color: var(--ink-2); }
 .times button[aria-checked="true"] { background: var(--tan); border-color: var(--tan); color: var(--on-tan); }
