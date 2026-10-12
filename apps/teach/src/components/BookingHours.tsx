@@ -1,7 +1,7 @@
 // Settings: each teacher's online booking hours (schools/{s}/availability/{teacherId}), which the learn
 // site turns into open slots. Staff and the teacher themself may write it (rules); the functions read
 // it through resolveAvailability, which drops anything malformed.
-import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import {
   AVAILABILITY_DEFAULTS,
@@ -15,8 +15,8 @@ import {
   type Weekday,
 } from '@lessonkaki/shared';
 import { db } from '../firebase';
-import { useDoc, useTeachers, useTimeZone } from '../hooks';
-import { useSchoolId } from '../session';
+import { useDoc, useSchool, useTeachers, useTimeZone } from '../hooks';
+import { useSchoolId, useSession } from '../session';
 
 const DAY_NAMES: Record<Weekday, string> = { MO: 'Mon', TU: 'Tue', WE: 'Wed', TH: 'Thu', FR: 'Fri', SA: 'Sat', SU: 'Sun' };
 const NUMBERS = [
@@ -182,12 +182,52 @@ function TeacherHours({ teacherId, name }: { teacherId: string; name: string }) 
   );
 }
 
+/** School-wide cap on upcoming portal bookings per student (schools/{s}.booking.maxUpcoming); blank = no limit. */
+function BookingLimit() {
+  const schoolId = useSchoolId();
+  const { role } = useSession();
+  const school = useSchool();
+  const stored = (school.data as { booking?: { maxUpcoming?: number | null } } | null)?.booking?.maxUpcoming ?? null;
+  const [value, setValue] = useState<string | null>(null);
+  const [state, setState] = useState<{ busy: boolean; saved: boolean; error: string | null }>({ busy: false, saved: false, error: null });
+  const shown = value ?? (stored ? String(stored) : '');
+  const parsed = shown.trim() === '' ? null : Number(shown);
+  const invalid = parsed !== null && !(Number.isInteger(parsed) && parsed >= 1 && parsed <= 50);
+
+  async function save() {
+    setState({ busy: true, saved: false, error: null });
+    try {
+      await updateDoc(doc(db, 'schools', schoolId), { 'booking.maxUpcoming': parsed, updatedAt: serverTimestamp() });
+      setState({ busy: false, saved: true, error: null });
+    } catch (err) {
+      setState({ busy: false, saved: false, error: (err as Error).message });
+    }
+  }
+
+  return (
+    <div className="row">
+      <label className="field">
+        <span>Most upcoming lessons one student can book online (blank = no limit)</span>
+        <input type="number" min={1} max={50} value={shown} disabled={role !== 'owner'} onChange={(e) => setValue(e.target.value)} />
+      </label>
+      {role === 'owner' && (
+        <button type="button" className="btn" onClick={save} disabled={state.busy || invalid}>
+          {state.busy ? 'Saving…' : 'Save limit'}
+        </button>
+      )}
+      {state.saved && <span className="success">Saved.</span>}
+      {(state.error || invalid) && <span className="error">{state.error ?? 'Use a whole number from 1 to 50, or leave blank.'}</span>}
+    </div>
+  );
+}
+
 export function BookingHours() {
   const teachers = useTeachers();
   const active = teachers.data.filter((t) => t.active !== false);
   if (teachers.loading) return <p className="muted">Loading…</p>;
   return (
     <div className="stack">
+      <BookingLimit />
       {active.map((t) => (
         <TeacherHours key={t.id} teacherId={t.id} name={t.displayName} />
       ))}

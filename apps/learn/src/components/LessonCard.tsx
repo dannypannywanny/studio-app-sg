@@ -44,7 +44,7 @@ function CancelControl({ item, ctx, tone }: { item: MyLesson; ctx: LessonContext
     const email = ctx.profile?.contactEmail;
     return (
       <p className={`cancel-note ${tone}`}>
-        Less than {ctx.policy.lateCancelHours} hours to go. To cancel,{' '}
+        {ctx.policy.lateCancelHours > 0 ? `Less than ${ctx.policy.lateCancelHours} hours to go.` : 'This lesson has started.'} To cancel,{' '}
         {email ? <a href={`mailto:${email}?subject=${encodeURIComponent(`Cancel my lesson on ${dayLabel(start, ctx.timeZone)}`)}`}>contact the studio</a> : 'contact the studio'}.
       </p>
     );

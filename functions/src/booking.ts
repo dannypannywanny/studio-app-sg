@@ -22,8 +22,6 @@ import { MAX_DURATION_MIN, checkRefs, teacherWindow, writeLesson } from './lesso
 
 /** Attendee statuses that keep the teacher's time taken. */
 const HOLDS_TIME: ReadonlySet<AttendanceStatus> = new Set(['booked', 'present', 'absent']);
-/** Upcoming portal bookings one student may hold at once, unless schools/{s}.booking.maxUpcoming says otherwise. */
-export const DEFAULT_MAX_UPCOMING = 4;
 const MAX_LESSON_MS = MAX_DURATION_MIN * 60_000;
 const DAY_MS = 86_400_000;
 
@@ -43,9 +41,13 @@ const txReader = (tx: FirebaseFirestore.Transaction): Reader => ({
 
 const startMs = (d: DocumentSnapshot) => (d.get('startAt') as Timestamp).toMillis();
 const endMs = (d: DocumentSnapshot) => (d.get('endAt') as Timestamp).toMillis();
-const maxUpcoming = (school: DocumentSnapshot) => {
+/**
+ * Upcoming portal bookings one student may hold at once (schools/{s}.booking.maxUpcoming).
+ * Unset or null = no limit (Daniel's studio); a school that wants a cap sets a number.
+ */
+const maxUpcoming = (school: DocumentSnapshot): number | null => {
   const n = school.get('booking.maxUpcoming');
-  return typeof n === 'number' && Number.isInteger(n) && n >= 0 ? n : DEFAULT_MAX_UPCOMING;
+  return typeof n === 'number' && Number.isInteger(n) && n >= 1 ? n : null;
 };
 
 /** The teacher's lessons overlapping [fromMs, toMs) that still have a student on them. */
@@ -142,8 +144,8 @@ export interface AvailabilityResult {
   teachers: BookableTeacher[];
   /** ISO instants, sorted. */
   slots: { teacherId: string; startAt: string; inPerson: boolean; online: boolean }[];
-  /** Upcoming lessons the student booked here, and how many they may hold. Null for staff. */
-  upcoming: { booked: number; max: number } | null;
+  /** Upcoming lessons the student booked here, and how many they may hold (max null = no limit). Null for staff. */
+  upcoming: { booked: number; max: number | null } | null;
 }
 
 export async function getAvailability(
@@ -261,7 +263,7 @@ export async function bookLesson(db: Firestore, input: BookLessonInput, actor: A
     }
     const booked = own.filter((l) => l.active && l.source === 'portal' && l.startMs > at.getTime()).length;
     const max = maxUpcoming(schoolSnap);
-    if (booked >= max) {
+    if (max !== null && booked >= max) {
       throw new HttpsError(
         'failed-precondition',
         `You can have up to ${max} upcoming lessons booked here. Please contact the studio to book more.`,

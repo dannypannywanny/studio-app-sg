@@ -1,5 +1,5 @@
 {
-  "_note": "Learn site profile for setup-learn.ts. Public business details only. Booking hours go under \"availability\" keyed by teacher id (owner-teacher = Daniel, piano-teacher = Allie), e.g. {\"weekly\": [{\"day\": \"MO\", \"start\": \"10:00\", \"end\": \"18:00\", \"inPerson\": true, \"online\": true, \"locationId\": \"studio\"}], \"lessonMin\": 45, \"stepMin\": 30, \"bufferMin\": 15, \"minNoticeHours\": 12, \"horizonDays\": 28}. Waiting for Daniel's hours.",
+  "_note": "Learn site profile for setup-learn.ts. Public business details and booking rules only. Daniel (2026-10-13): 45-min lessons back to back (no gap), last-minute booking and cancelling allowed, 28 days ahead, no cap on bookings. Weekly hours are entered in teach (Settings > Online booking hours); listing \"weekly\" here would replace them.",
   "schoolId": "sywh",
   "hosts": ["class-app-sg-learn.web.app", "learn.singyourwayhome.sg"],
   "profile": {
@@ -8,5 +8,9 @@
     "siteUrl": "https://singyourwayhome.sg",
     "contactEmail": "hello@singyourwayhome.sg",
     "whatsapp": null
+  },
+  "school": { "lateCancelHours": 0, "maxUpcoming": null },
+  "availability": {
+    "owner-teacher": { "bookable": true, "subjectId": "voice", "lessonMin": 45, "stepMin": 15, "bufferMin": 0, "minNoticeHours": 0, "horizonDays": 28 }
   }
 }

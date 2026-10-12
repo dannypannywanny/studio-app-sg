@@ -177,7 +177,7 @@ export function Book() {
     );
   }
 
-  const full = data.upcoming && data.upcoming.booked >= data.upcoming.max;
+  const full = data.upcoming?.max != null && data.upcoming.booked >= data.upcoming.max;
   const sessionsLeft = student.data?.summary?.sessionsAvailable ?? 0;
   const abroad = otherZone(tz);
   const contact = profile.data?.contactEmail;

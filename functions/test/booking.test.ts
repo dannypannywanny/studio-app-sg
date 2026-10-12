@@ -65,7 +65,7 @@ describe('getAvailability', () => {
     const t = await setup();
     const res = await getAvailability(db, { schoolId: t.schoolId }, student(t), NOW);
     expect(res.teachers).toEqual([{ teacherId: t.teacherId, name: 'Teacher One', lessonMin: 45, inPerson: true, online: true }]);
-    expect(res.upcoming).toEqual({ booked: 0, max: 4 });
+    expect(res.upcoming).toEqual({ booked: 0, max: null }); // no cap unless the school sets one
     expect(await slotTimes(t)).toEqual(['10:00', '10:30', '11:00']);
     const tuesday = res.slots.find((s) => Date.parse(s.startAt) >= sg(TUE, '00:00').getTime());
     expect(tuesday).toMatchObject({ inPerson: false, online: true });
@@ -170,7 +170,14 @@ describe('bookLesson', () => {
     await expect(book(t, MON, '10:00')).rejects.toThrow(/no longer available/);
   });
 
-  it('caps upcoming portal bookings per student; lessons staff scheduled do not count', async () => {
+  it('has no cap on upcoming bookings by default', async () => {
+    const t = await setup();
+    await book(t, MON, '10:00');
+    await book(t, MON, '11:00', { mode: 'online' });
+    await expect(book(t, TUE, '10:00', { mode: 'online' })).resolves.toMatchObject({ existing: false });
+  });
+
+  it('caps upcoming portal bookings per student when the school sets one; lessons staff scheduled do not count', async () => {
     const t = await setup(HOURS, 1);
     await book(t, MON, '10:00');
     await expect(book(t, TUE, '11:00', { mode: 'online' })).rejects.toThrow(/up to 1 upcoming/);

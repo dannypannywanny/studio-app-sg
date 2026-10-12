@@ -76,7 +76,7 @@ export interface AvailabilityResult {
   timeZone: string;
   teachers: { teacherId: string; name: string; lessonMin: number; inPerson: boolean; online: boolean }[];
   slots: { teacherId: string; startAt: string; inPerson: boolean; online: boolean }[];
-  upcoming: { booked: number; max: number } | null;
+  upcoming: { booked: number; max: number | null } | null;
 }
 
 export interface BookLessonInput {

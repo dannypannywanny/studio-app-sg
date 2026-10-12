@@ -89,6 +89,18 @@
             }
           ]
         }
+      ],
+      "redirects": [
+        {
+          "source": "/en",
+          "destination": "/",
+          "type": 301
+        },
+        {
+          "source": "/en/**",
+          "destination": "/",
+          "type": 301
+        }
       ]
     },
     {

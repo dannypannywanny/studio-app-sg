@@ -20,6 +20,8 @@ interface LearnProfile {
   hosts: string[];
   profile: { name: string; logoUrl: string | null; siteUrl: string | null; contactEmail: string | null; whatsapp: string | null };
   availability?: Record<string, Availability>;
+  /** School-wide booking rules: online cancel cutoff (policy.lateCancelHours) and the per-student cap (null = none). */
+  school?: { lateCancelHours?: number; maxUpcoming?: number | null };
 }
 
 async function main() {
@@ -45,12 +47,27 @@ async function main() {
     batch.set(db.collection('publicSchools').doc(host), { schoolId: cfg.schoolId, site: 'learn', updatedAt: ts });
   }
   batch.set(school.collection('public').doc('profile'), { ...cfg.profile, teachers: teacherNames, updatedAt: ts });
+  if (cfg.school) {
+    const patch: Record<string, unknown> = { updatedAt: ts };
+    const { lateCancelHours, maxUpcoming } = cfg.school;
+    if (lateCancelHours !== undefined) {
+      if (!Number.isInteger(lateCancelHours) || lateCancelHours < 0 || lateCancelHours > 168) throw new Error('lateCancelHours must be 0-168');
+      patch['policy.lateCancelHours'] = lateCancelHours;
+    }
+    if (maxUpcoming !== undefined) {
+      if (maxUpcoming !== null && (!Number.isInteger(maxUpcoming) || maxUpcoming < 1)) throw new Error('maxUpcoming must be null or a whole number');
+      patch['booking.maxUpcoming'] = maxUpcoming;
+    }
+    batch.update(school, patch);
+    console.log(`School settings: ${JSON.stringify(cfg.school)}`);
+  }
 
   for (const [teacherId, hours] of Object.entries(cfg.availability ?? {})) {
     if (!teacherNames[teacherId]) throw new Error(`Teacher ${teacherId} not found or inactive`);
     const resolved = resolveAvailability(hours);
     if (resolved.weekly.length !== (hours.weekly ?? []).length) throw new Error(`Some weekly hours for ${teacherId} are invalid`);
-    batch.set(school.collection('availability').doc(teacherId), { ...hours, updatedAt: ts });
+    // Merge: hours entered later in teach (Settings > Online booking hours) aren't wiped by a re-run without them.
+    batch.set(school.collection('availability').doc(teacherId), { ...hours, updatedAt: ts }, { merge: true });
     const next = openSlots(resolved, { timeZone, now: new Date(), busy: [] }).slice(0, 3);
     console.log(`${teacherId}: ${resolved.weekly.length} weekly blocks; first open times (before lessons): ${next.map((s) => s.startAt.toISOString()).join(', ')}`);
   }
