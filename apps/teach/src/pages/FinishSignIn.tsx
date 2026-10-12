@@ -1,14 +1,19 @@
 import { isSignInWithEmailLink, signInWithEmailLink, type MultiFactorResolver } from 'firebase/auth';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
+import { resolveActionLink } from '@lessonkaki/shared';
 import { auth } from '../firebase';
 import { EMAIL_KEY } from './SignIn';
 import { SecondFactorPrompt, secondFactorResolver } from './TwoStep';
 
 export function FinishSignIn() {
   const navigate = useNavigate();
-  const href = window.location.href;
-  const valid = isSignInWithEmailLink(auth, href);
+  // Auth's email action URL is this page: fill in the apiKey if the link lacks it, and hand other
+  // email actions (e.g. reverting a second factor) to Firebase's own handler.
+  const { apiKey = '', authDomain = '' } = auth.app.options;
+  const link = resolveActionLink(window.location.href, apiKey, authDomain);
+  const href = link.kind === 'signIn' ? link.href : window.location.href;
+  const valid = link.kind === 'signIn' && isSignInWithEmailLink(auth, href);
   const [email, setEmail] = useState(() => window.localStorage.getItem(EMAIL_KEY) ?? '');
   const [needEmail, setNeedEmail] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,12 +37,15 @@ export function FinishSignIn() {
   }
 
   useEffect(() => {
+    if (link.kind === 'firebase') return window.location.replace(link.href);
     if (!valid || started.current) return;
     started.current = true;
     if (email) void finish(email);
     else setNeedEmail(true); // opened on a different device or browser
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  if (link.kind === 'firebase') return <p className="page-status">Opening…</p>;
 
   if (!valid) {
     return (
