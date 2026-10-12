@@ -208,7 +208,8 @@ function plan() {
     expected: { students: 0, sessions: 0, moneyCreditCents: 0, outstandingCents: openInvoices.reduce((n, i) => n + i.amountCents, 0) },
   };
 
-  writeFileSync(PLAN, JSON.stringify({ createdAt: now, plan: p }, null, 1));
+  // studentKeys and attended are kept for the reconciliation sheet (personal data: gitignored).
+  writeFileSync(PLAN, JSON.stringify({ createdAt: now, plan: p, studentKeys: keys, attended }, null, 1));
   writeFileSync(resolve(RAW, 'open-invoices.json'), JSON.stringify(openBalances, null, 2));
   writeFileSync(resolve(RAW, 'replay-review.md'), review(p, unmatched));
 
