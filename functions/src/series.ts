@@ -19,7 +19,8 @@ import {
   type Occurrence,
   type Weekday,
 } from '@lessonkaki/shared';
-import { prepareCancelLesson } from './attendance';
+import { enqueueAlert } from './alerts';
+import { enqueueLessonCancelled, prepareCancelLesson } from './attendance';
 import { CreditTx } from './creditTx';
 import { audit, notFound, now, readAll, schoolRef, type Actor } from './db';
 import { MAX_DURATION_MIN, checkRefs, findClash, teacherWindow, writeLesson, type LessonShape } from './lessons';
@@ -164,6 +165,21 @@ export async function createSeries(
       });
       return ref.id;
     });
+    enqueueAlert(
+      tx,
+      school,
+      `series_${seriesRef.id}`,
+      {
+        type: 'series.booked',
+        seriesId: seriesRef.id,
+        studentIds,
+        firstStartAt: occ[0]!.startAt,
+        lessons: lessonIds.length,
+        byDay: rule.byDay,
+      },
+      actor,
+      at,
+    );
     audit(tx, school, actor, 'createSeries', `series/${seriesRef.id}`, { rrule, lessons: lessonIds.length, skipped });
     return { seriesId: seriesRef.id, lessonIds, skipped };
   });
@@ -325,6 +341,7 @@ async function editOne(db: Firestore, input: EditLessonInput, actor: Actor, at: 
       const write = await prepareCancelLesson(ct, lessonRef, lesson, resolvePolicy(schoolSnap.get('policy')), reason);
       const restored = write();
       ct.flush();
+      enqueueLessonCancelled(ct, input.lessonId, lesson, restored, reason);
       audit(tx, school, actor, 'editLesson.cancel', `lessons/${input.lessonId}`, { scope: 'one', restored });
       return { ...emptyResult(seriesId), cancelled: 1, restored };
     }
@@ -436,6 +453,25 @@ async function editSeries(db: Firestore, input: EditLessonInput, actor: Actor, a
         active: until >= series.startDate,
         updatedAt: now(),
       });
+      if (result.cancelled + result.deleted > 0) {
+        enqueueAlert(
+          tx,
+          school,
+          `seriescancel_${seriesId}_${pivotDate}_${at.getTime()}`,
+          {
+            type: 'series.cancelled',
+            seriesId,
+            studentIds: series.studentIds as string[],
+            fromDate: maxDate(pivotDate, today),
+            cancelled: result.cancelled,
+            deleted: result.deleted,
+            restored: result.restored,
+            reason,
+          },
+          actor,
+          at,
+        );
+      }
       audit(tx, school, actor, 'editLesson.cancel', `series/${seriesId}`, { scope: input.scope, pivotDate, ...result });
       return result;
     }

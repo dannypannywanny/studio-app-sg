@@ -33,7 +33,8 @@ service cloud.firestore {
 
     match /schools/{s} {
       allow read: if role(s) != null;
-      allow update: if isOwner(s) && untouched(['gateways']);
+      // gateways and mail (the verified sender address) are set server-side only.
+      allow update: if isOwner(s) && untouched(['gateways', 'mail']);
       allow create, delete: if false;
 
       match /public/{doc} { allow read: if true; allow write: if isStaff(s); }
@@ -116,6 +117,7 @@ service cloud.firestore {
       match /auditLog/{id} { allow read: if isStaff(s); allow write: if false; }
       match /jobs/{id} { allow read: if isStaff(s); allow write: if false; }
       match /idempotency/{id} { allow read, write: if false; }
+      match /alerts/{id} { allow read: if isStaff(s); allow write: if false; } // email outbox, functions only
     }
   }
 }

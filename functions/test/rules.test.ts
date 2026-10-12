@@ -55,6 +55,7 @@ beforeAll(async () => {
       await setDoc(doc(db, `schools/${s}/lessons/l2/attendees/stu2`), { schoolId: s, studentId: 'stu2', status: 'booked' });
       await setDoc(doc(db, `schools/${s}/members/owner-${s}`), { role: 'owner' });
       await setDoc(doc(db, `schools/${s}/public/profile`), { name: s });
+      await setDoc(doc(db, `schools/${s}/alerts/a1`), { type: 'payment.recorded', status: 'sent' });
     }
   });
 });
@@ -126,7 +127,22 @@ describe('no client writes to money and credit data', () => {
     await assertSucceeds(updateDoc(doc(owner(), `schools/${A}`), { name: 'Renamed' }));
     await assertFails(updateDoc(doc(owner(), `schools/${A}`), { 'gateways.hitpay.enabled': true }));
     await assertFails(updateDoc(doc(admin(), `schools/${A}`), { name: 'Admin rename' }));
+    await assertSucceeds(updateDoc(doc(owner(), `schools/${A}`), { alerts: { to: ['me@example.com'], events: { payments: false } } }));
+    await assertFails(updateDoc(doc(admin(), `schools/${A}`), { 'alerts.to': ['admin@example.com'] }));
+    await assertFails(updateDoc(doc(owner(), `schools/${A}`), { 'mail.from': 'Someone <x@other-school.example>' }));
     await assertSucceeds(setDoc(doc(admin(), `schools/${A}/packages/p2`), { name: 'Trial', active: true }));
+  });
+});
+
+describe('email alerts outbox', () => {
+  it('staff read it; nobody writes it from a client; other roles and schools see nothing', async () => {
+    await assertSucceeds(getDoc(doc(owner(), `schools/${A}/alerts/a1`)));
+    await assertSucceeds(getDoc(doc(admin(), `schools/${A}/alerts/a1`)));
+    await assertFails(getDoc(doc(teacher(), `schools/${A}/alerts/a1`)));
+    await assertFails(getDoc(doc(student(), `schools/${A}/alerts/a1`)));
+    await assertFails(getDoc(doc(owner(), `schools/${B}/alerts/a1`)));
+    await assertFails(setDoc(doc(owner(), `schools/${A}/alerts/a2`), { type: 'payment.recorded', status: 'pending' }));
+    await assertFails(updateDoc(doc(owner(), `schools/${A}/alerts/a1`), { status: 'pending' }));
   });
 });
 

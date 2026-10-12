@@ -7,6 +7,7 @@
 import { Timestamp, type Firestore } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
 import type { InvoiceStatus } from '@lessonkaki/shared';
+import { enqueueAlert } from './alerts';
 import { CreditTx } from './creditTx';
 import { audit, notFound, now, readAll, schoolRef, type Actor } from './db';
 
@@ -131,6 +132,25 @@ export async function recordPayment(
       pendingCents: pendingAfter,
     };
     tx.create(idemRef, { invoiceId: input.invoiceId, amountCents: input.amountCents, result, actorUid: actor.uid, createdAt: now() });
+    enqueueAlert(
+      tx,
+      school,
+      `payment_${paymentRef.id}`,
+      {
+        type: 'payment.recorded',
+        paymentId: paymentRef.id,
+        invoiceId: input.invoiceId,
+        invoiceNumber: inv.number as string,
+        studentId,
+        amountCents: input.amountCents,
+        currency: (inv.currency as string | undefined) ?? 'SGD',
+        method: input.method,
+        pendingCents: pendingAfter,
+        overpaymentCents: over,
+      },
+      actor,
+      at,
+    );
     audit(tx, school, actor, 'recordPayment', `invoices/${input.invoiceId}`, {
       method: input.method,
       amountCents: input.amountCents,

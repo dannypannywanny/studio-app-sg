@@ -1,5 +1,6 @@
 import { Timestamp, type DocumentReference, type DocumentSnapshot, type Firestore, type Query } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
+import { enqueueAlert } from './alerts';
 import { newAttendeeDoc } from './attendance';
 import { audit, notFound, now, readAll, schoolRef, type Actor } from './db';
 
@@ -120,7 +121,12 @@ export interface CreateLessonResult {
   lessonId: string;
 }
 
-export async function createLesson(db: Firestore, input: CreateLessonInput, actor: Actor): Promise<CreateLessonResult> {
+export async function createLesson(
+  db: Firestore,
+  input: CreateLessonInput,
+  actor: Actor,
+  at: Date = new Date(),
+): Promise<CreateLessonResult> {
   const school = schoolRef(db, input.schoolId);
   const studentIds = [...new Set(input.studentIds)];
   if (studentIds.length === 0) throw new HttpsError('invalid-argument', 'Add at least one student');
@@ -144,6 +150,17 @@ export async function createLesson(db: Firestore, input: CreateLessonInput, acto
 
     const lessonRef = school.collection('lessons').doc();
     writeLesson(tx, lessonRef, input.schoolId, input, start, studentIds, actor);
+    // A lesson entered after the fact is record-keeping, not a booking.
+    if (start > at.getTime()) {
+      enqueueAlert(
+        tx,
+        school,
+        `lesson_${lessonRef.id}`,
+        { type: 'lesson.booked', lessonId: lessonRef.id, studentIds, startAt: input.startAt, source: 'admin' },
+        actor,
+        at,
+      );
+    }
     audit(tx, school, actor, 'createLesson', `lessons/${lessonRef.id}`, { teacherId: input.teacherId, studentIds });
     return { lessonId: lessonRef.id };
   });

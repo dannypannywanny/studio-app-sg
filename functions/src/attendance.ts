@@ -12,6 +12,7 @@ import {
   type AttendanceStatus,
   type CreditPolicy,
 } from '@lessonkaki/shared';
+import { enqueueAlert } from './alerts';
 import { CreditTx, pickLot, readActiveLots, type LotState } from './creditTx';
 import { audit, notFound, now, readAll, schoolRef, type Actor } from './db';
 
@@ -267,7 +268,23 @@ export async function cancelAttendance(
     const from = l.attendee.get('status') as AttendanceStatus;
     if (from === 'removed') throw new HttpsError('failed-precondition', 'That student was removed from this lesson');
     if (from === to) return { status: to, late, charge: 'none' };
-    const { charge } = await changeOne(l, to, { attendee: { cancelledAt: Timestamp.fromDate(at), cancelledBy: actor.uid } });
+    const { charge, update } = await changeOne(l, to, { attendee: { cancelledAt: Timestamp.fromDate(at), cancelledBy: actor.uid } });
+    enqueueAlert(
+      tx,
+      school,
+      `cancel_${input.lessonId}_${input.studentId}_${update.rev as number}`,
+      {
+        type: 'attendee.cancelled',
+        lessonId: input.lessonId,
+        studentId: input.studentId,
+        startAt: (l.lesson.startAt as Timestamp).toDate(),
+        late,
+        charge,
+        byStudent: actor.role === 'student',
+      },
+      actor,
+      at,
+    );
     audit(tx, school, actor, 'cancelAttendance', `lessons/${input.lessonId}/attendees/${input.studentId}`, {
       from,
       to,
@@ -337,14 +354,28 @@ export async function addAttendee(
 
     const siblings = (await tx.get(lessonRef.collection('attendees'))).docs;
     const policy = resolvePolicy(schoolSnap.get('policy'));
+    let rev = 0;
     if (attendeeSnap.exists) {
       // Back on after a cancel or removal: re-book (a late cancel that kept its credit gives it back).
       const prepared = await prepareTransition(ct, attendeeSnap, 'booked', policy, lesson.startAt as Timestamp);
       const { update } = applyTransition(ct, input.lessonId, attendeeSnap, 'booked', prepared);
       ct.flush();
       tx.update(attendeeRef, { ...update, cancelledAt: null, cancelledBy: null });
+      rev = update.rev as number;
     } else {
       tx.create(attendeeRef, newAttendeeDoc(input.schoolId, input.lessonId, input.studentId, lesson.startAt as Timestamp));
+    }
+    const startAt = (lesson.startAt as Timestamp).toDate();
+    // Putting someone on a past lesson is record-keeping, not a booking.
+    if (startAt > at) {
+      enqueueAlert(
+        tx,
+        school,
+        `book_${input.lessonId}_${input.studentId}_${rev}`,
+        { type: 'lesson.booked', lessonId: input.lessonId, studentIds: [input.studentId], startAt, source: 'admin' },
+        actor,
+        at,
+      );
     }
     const studentIds = [...new Set([...(lesson.studentIds as string[]), input.studentId])];
     const statuses = siblings.filter((d) => d.id !== input.studentId).map((d) => d.get('status') as AttendanceStatus);
@@ -373,9 +404,26 @@ export async function removeAttendee(
     const l = await loadOne(new CreditTx(tx, school, actor, at), input);
     const from = l.attendee.get('status') as AttendanceStatus;
     if (from === 'removed') return { charge: 'none' as Charge };
-    const { charge } = await changeOne(l, 'removed', {
+    const { charge, update } = await changeOne(l, 'removed', {
       lesson: { studentIds: FieldValue.arrayRemove(input.studentId), ...(l.lesson.seriesId ? { isException: true } : {}) },
     });
+    // Taking an already-cancelled student off is tidying up; the cancel had its own alert.
+    if (from !== 'cancelled' && from !== 'lateCancelled') {
+      enqueueAlert(
+        tx,
+        school,
+        `remove_${input.lessonId}_${input.studentId}_${update.rev as number}`,
+        {
+          type: 'attendee.removed',
+          lessonId: input.lessonId,
+          studentId: input.studentId,
+          startAt: (l.lesson.startAt as Timestamp).toDate(),
+          charge,
+        },
+        actor,
+        at,
+      );
+    }
     audit(tx, school, actor, 'removeAttendee', `lessons/${input.lessonId}/attendees/${input.studentId}`, { from, charge });
     return { charge };
   });
@@ -430,6 +478,25 @@ export async function prepareCancelLesson(
   };
 }
 
+/** One alert for a cancelled lesson (cancelLesson, and editLesson with scope 'one'). */
+export function enqueueLessonCancelled(ct: CreditTx, lessonId: string, lesson: DocumentData, restored: number, reason: string | null): void {
+  enqueueAlert(
+    ct.tx,
+    ct.school,
+    `lessoncancel_${lessonId}`,
+    {
+      type: 'lesson.cancelled',
+      lessonId,
+      studentIds: lesson.studentIds as string[],
+      startAt: (lesson.startAt as Timestamp).toDate(),
+      restored,
+      reason,
+    },
+    ct.actor,
+    ct.at,
+  );
+}
+
 export async function cancelLesson(
   db: Firestore,
   input: { schoolId: string; lessonId: string; reason?: string | null },
@@ -448,6 +515,7 @@ export async function cancelLesson(
     const write = await prepareCancelLesson(ct, lessonRef, lesson, resolvePolicy(schoolSnap.get('policy')), input.reason ?? null);
     const restored = write();
     ct.flush();
+    enqueueLessonCancelled(ct, lessonRef.id, lesson, restored, input.reason ?? null);
     audit(tx, school, actor, 'cancelLesson', `lessons/${input.lessonId}`, { restored, reason: input.reason ?? null });
     return { restored, alreadyCancelled: false };
   });

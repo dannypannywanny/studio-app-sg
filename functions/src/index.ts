@@ -7,9 +7,11 @@ import { getStorage } from 'firebase-admin/storage';
 import { setGlobalOptions } from 'firebase-functions/v2';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import { onDocumentWritten } from 'firebase-functions/v2/firestore';
+import { onDocumentCreated, onDocumentWritten } from 'firebase-functions/v2/firestore';
+import { defineSecret } from 'firebase-functions/params';
 import { z } from 'zod';
 import { ROLES, WEEKDAYS, isWallDate, isWallTime } from '@lessonkaki/shared';
+import * as alerts from './alerts';
 import { requireRole } from './auth';
 import * as attendance from './attendance';
 import * as credits from './credits';
@@ -320,3 +322,19 @@ export const importStudents = onCall(async (req) => {
   const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
   return importing.importStudents(db(), input as importing.ImportStudentsInput, actor);
 });
+
+// Owner email alerts. The Resend key is one platform-wide secret (Secret Manager: RESEND_API_KEY); each
+// school sends from its own verified domain (schools/{id}.mail.from, server-set), else the default below.
+const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
+/** Resend's shared test sender: delivers only to the Resend account's own address. */
+const DEFAULT_ALERT_FROM = 'LessonKaki <onboarding@resend.dev>';
+
+/** Sends each alert written by the functions above. Retries on transient errors (see alerts.ts). */
+export const onAlertCreated = onDocumentCreated(
+  { document: 'schools/{schoolId}/alerts/{alertId}', region: 'asia-southeast1', secrets: [RESEND_API_KEY], retry: true },
+  async (event) => {
+    const key = RESEND_API_KEY.value();
+    const { schoolId, alertId } = event.params;
+    await alerts.deliverAlert(db(), key ? alerts.resendSender(key) : null, schoolId, alertId, { defaultFrom: DEFAULT_ALERT_FROM });
+  },
+);

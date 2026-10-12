@@ -1,11 +1,23 @@
-// S13 Settings: school details, credit policy, branding (owner), subjects and locations (staff).
-import { addDoc, collection, doc, query, serverTimestamp, updateDoc } from 'firebase/firestore';
+// S13 Settings: school details, credit policy, email alerts, branding (owner), subjects and locations (staff).
+import { addDoc, collection, doc, limit, orderBy, query, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { useState, type FormEvent, type ReactNode } from 'react';
-import { DEFAULT_POLICY, resolvePolicy, type Branding, type CreditPolicy } from '@lessonkaki/shared';
+import {
+  ALERT_CATEGORIES,
+  ALERT_CATEGORY_LABELS,
+  DEFAULT_POLICY,
+  MAX_ALERT_RECIPIENTS,
+  formatDateTime,
+  isEmail,
+  resolveAlertSettings,
+  resolvePolicy,
+  type AlertSettings,
+  type Branding,
+  type CreditPolicy,
+} from '@lessonkaki/shared';
 import { db } from '../firebase';
 import { useQuery, useSchool } from '../hooks';
 import { useSchoolId, useSession } from '../session';
-import type { Subject } from '../types';
+import type { Subject, Ts } from '../types';
 
 function Section({ title, children, note }: { title: string; note?: string; children: ReactNode }) {
   return (
@@ -161,6 +173,94 @@ function PolicyForm({ policy, canEdit }: { policy: CreditPolicy; canEdit: boolea
   );
 }
 
+const ALERT_TYPE_LABELS: Record<string, string> = {
+  'lesson.booked': 'Lesson booked',
+  'series.booked': 'Weekly lessons booked',
+  'attendee.cancelled': 'Cancellation',
+  'attendee.removed': 'Taken off a lesson',
+  'lesson.cancelled': 'Lesson cancelled',
+  'series.cancelled': 'Weekly lessons ended',
+  'payment.recorded': 'Payment recorded',
+  'payment.succeeded': 'Payment received online',
+  'payment.failed': 'Online payment failed',
+  'payment.abandoned': 'Online payment not completed',
+};
+
+const ALERT_STATUS_LABELS: Record<string, string> = { pending: 'Sending', sent: 'Sent', skipped: 'Not sent', failed: 'Failed' };
+
+function AlertsForm({ settings, canEdit }: { settings: AlertSettings; canEdit: boolean }) {
+  const [to, setTo] = useState(settings.to.join(', '));
+  const [events, setEvents] = useState(settings.events);
+  const [skipStaff, setSkipStaff] = useState(settings.skipStaffActions);
+  const [invalid, setInvalid] = useState<string | null>(null);
+  const s = useSaveSchool();
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    const list = [...new Set(to.split(/[\s,;]+/).map((x) => x.trim().toLowerCase()).filter(Boolean))];
+    const bad = list.filter((x) => !isEmail(x));
+    if (bad.length) return setInvalid(`Not an email address: ${bad.join(', ')}`);
+    if (list.length > MAX_ALERT_RECIPIENTS) return setInvalid(`Up to ${MAX_ALERT_RECIPIENTS} addresses`);
+    setInvalid(null);
+    void s.save({ alerts: { to: list, events, skipStaffActions: skipStaff } });
+  }
+  return (
+    <form className="form-grid" onSubmit={submit}>
+      <fieldset disabled={!canEdit} className="form-grid span-all fieldset-plain">
+        <label className="field span-all">
+          <span>Send to (separate several addresses with commas)</span>
+          <input value={to} onChange={(e) => setTo(e.target.value)} placeholder="you@example.com" />
+        </label>
+        {ALERT_CATEGORIES.map((c) => (
+          <label key={c} className="field checkbox span-all">
+            <input type="checkbox" checked={events[c]} onChange={(e) => setEvents({ ...events, [c]: e.target.checked })} />
+            <span>
+              {ALERT_CATEGORY_LABELS[c].label} <span className="muted">({ALERT_CATEGORY_LABELS[c].hint})</span>
+            </span>
+          </label>
+        ))}
+        <label className="field checkbox span-all">
+          <input type="checkbox" checked={skipStaff} onChange={(e) => setSkipStaff(e.target.checked)} />
+          <span>Skip changes made by staff in this app (only email about what students and online payments do)</span>
+        </label>
+      </fieldset>
+      {invalid && <p className="error span-all">{invalid}</p>}
+      {canEdit && <SaveRow {...s} disabled={false} />}
+    </form>
+  );
+}
+
+interface AlertRow {
+  type: string;
+  status: string;
+  skipReason?: string;
+  lastError?: string;
+  createdAt?: Ts;
+}
+
+function RecentAlerts({ timeZone }: { timeZone: string }) {
+  const schoolId = useSchoolId();
+  const rows = useQuery<AlertRow>(`alerts:${schoolId}`, () =>
+    query(collection(db, 'schools', schoolId, 'alerts'), orderBy('createdAt', 'desc'), limit(8)),
+  );
+  if (rows.loading || rows.data.length === 0) return null;
+  return (
+    <table className="table">
+      <tbody>
+        {rows.data.map((r) => (
+          <tr key={r.id}>
+            <td>{ALERT_TYPE_LABELS[r.type] ?? r.type}</td>
+            <td className="muted">{r.createdAt ? formatDateTime(r.createdAt.toDate(), timeZone) : ''}</td>
+            <td className={r.status === 'failed' ? 'error' : 'muted'} title={r.lastError ?? r.skipReason ?? ''}>
+              {ALERT_STATUS_LABELS[r.status] ?? r.status}
+              {r.status === 'skipped' && r.skipReason ? ` (${r.skipReason})` : ''}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function BrandingForm({ branding, canEdit }: { branding: Branding; canEdit: boolean }) {
   const [primary, setPrimary] = useState(branding.colors?.primary ?? '#4338ca');
   const [hover, setHover] = useState(branding.colors?.primaryHover ?? '#3730a3');
@@ -282,7 +382,12 @@ export function Settings() {
   const { role } = useSession();
   const isOwner = role === 'owner';
   if (school.loading || !school.data) return <p className="muted">Loading…</p>;
-  const data = school.data as unknown as Partial<SchoolFields> & { policy?: Partial<CreditPolicy>; branding?: Branding };
+  const data = school.data as unknown as Partial<SchoolFields> & {
+    policy?: Partial<CreditPolicy>;
+    branding?: Branding;
+    alerts?: Partial<AlertSettings>;
+    timezone?: string;
+  };
   const ownerNote = isOwner ? undefined : 'Only the owner can change this.';
 
   return (
@@ -293,6 +398,13 @@ export function Settings() {
       </Section>
       <Section title="Credit rules" note={ownerNote ?? 'Applies to attendance marked from now on. Past charges are not recalculated.'}>
         <PolicyForm policy={resolvePolicy(data.policy)} canEdit={isOwner} />
+      </Section>
+      <Section
+        title="Email alerts"
+        note={ownerNote ?? 'Emails like the ones Classcard sent: bookings, cancellations and payments. Recent alerts are listed below.'}
+      >
+        <AlertsForm settings={resolveAlertSettings(data.alerts, data.email)} canEdit={isOwner} />
+        {(role === 'owner' || role === 'admin') && <RecentAlerts timeZone={data.timezone ?? 'Asia/Singapore'} />}
       </Section>
       <Section title="Branding" note={ownerNote ?? 'Colours, fonts and logo for this school. Leave blank to use the LessonKaki defaults.'}>
         <BrandingForm branding={data.branding ?? {}} canEdit={isOwner} />

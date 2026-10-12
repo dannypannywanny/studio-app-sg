@@ -8,3 +8,4 @@ export * from './reports';
 export * from './branding';
 export * from './studentImport';
 export * from './authLinks';
+export * from './alerts';

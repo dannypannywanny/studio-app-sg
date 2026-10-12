@@ -50,6 +50,8 @@ schools/{schoolId}
            absentConsumesCredit: true, allowOwedLessons: true,
            debitOn: 'mark' }                                        // Classcard debits when attendance is marked
   pdpa { dpoName, dpoEmail, noticeVersion }
+  alerts { to[], events { bookings, cancellations, payments, paymentProblems }, skipStaffActions }   // owner email alerts
+  mail { from }                                                     // verified sender, server-set only
 
 schools/{s}/members/{uid}            role, teacherId?, studentId?, active, mfaEnrolled
 schools/{s}/teachers/{teacherId}     uid?, displayName, email, subjectIds[], payRateCents?, active
@@ -131,6 +133,8 @@ schools/{s}/payments/{id}
 schools/{s}/creditNotes/{id}           number, invoiceId, studentId, amountCents, reason, status ('issued'|'void')
 schools/{s}/counters/{name}            invoice, creditNote: { next } (transaction-incremented)
 schools/{s}/auditLog/{id}              actorUid, action, target, before?, after?, at  (staff-visible, function-written)
+schools/{s}/alerts/{alertId}           owner email outbox: type, category, data (ids, times, amounts), status ('pending'|'sent'|'skipped'|'failed'),
+                                       attempts, providerId?, lastError?, expireAt (TTL)  -- docs/email-alerts.md
 schools/{s}/public/profile             public booking page data: school name, bookable packages, teacher public names
 publicSchools/{hostname}               { schoolId, site: 'teach'|'learn' }  // host -> school lookup
 ```
