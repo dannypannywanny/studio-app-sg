@@ -24,6 +24,9 @@ const forget = () => {
 function signInError(code: string | undefined): string {
   switch (code) {
     // Self sign-up is off: only emails the studio has invited can sign in.
+    // Staff logins have two-step sign-in, which belongs to the staff app, not here.
+    case 'auth/multi-factor-auth-required':
+      return 'This is a staff login. Sign in on the staff app instead, or use your student email here.';
     case 'auth/admin-restricted-operation':
       return "This email isn't set up for the student portal yet. Ask the studio to add you, then try again.";
     case 'auth/invalid-email':
