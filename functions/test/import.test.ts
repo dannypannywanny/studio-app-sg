@@ -109,6 +109,34 @@ describe('opening balances (migration)', () => {
   });
 });
 
+describe('wholesale student import', () => {
+  const rows = () => mapClasscardRows(csvToObjects(fixture).rows);
+
+  it('plans every row as create: no demo, excluded or duplicate skipping', () => {
+    const plan = planImport(rows(), [], { excludeEmails: EXCLUDE, wholesale: true });
+    expect(summarisePlan(plan)).toEqual({ create: rows().length, duplicateInFile: 0, matchesExisting: 0, skip: 0 });
+  });
+
+  it('creates every row once, by export row, keeping the raw phone; a re-run creates nothing', async () => {
+    const t = await school();
+    const before = (await studentsOf(t)).length;
+    const all = rows();
+    const res = await importStudents(db, { schoolId: t.schoolId, rows: all, wholesale: true }, owner);
+    expect(res.created).toBe(all.length);
+    const created = (await studentsOf(t)).filter((s) => typeof s.importRow === 'number');
+    expect(created.length).toBe(all.length);
+    expect((await studentsOf(t)).length - before).toBe(all.length);
+    for (const s of created) expect(s.id).toBe(`ccrow-${s.importRow}`);
+    const golf = created.find((s) => s.firstName === 'Golf')!;
+    expect(golf).toMatchObject({ phone: null }); // unreadable phone: normalised value empty...
+    expect(golf.phoneRaw).toBeTruthy(); // ...but the exported text is kept
+
+    const again = await importStudents(db, { schoolId: t.schoolId, rows: all, wholesale: true }, owner);
+    expect(again.created).toBe(0);
+    expect(again.skipped.every((s) => s.action === 'matchesExisting' && s.reasons.includes('importRow'))).toBe(true);
+  });
+});
+
 describe('checkOpeningBalances', () => {
   const ok: OpeningBalances = {
     source: 'test',

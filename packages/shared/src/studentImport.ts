@@ -192,13 +192,15 @@ export interface ExistingStudent {
   email?: string | null;
   phone?: string | null;
   legacyId?: string | null;
+  /** Row number in the export a wholesale import created this student from. */
+  importRow?: number | null;
 }
 
 export interface PlanRow {
   candidate: ImportCandidate;
   action: ImportAction;
   /** Why it is skipped, or what it matched on. */
-  reasons: (SkipReason | 'email' | 'phone' | 'legacyId')[];
+  reasons: (SkipReason | 'email' | 'phone' | 'legacyId' | 'importRow')[];
   /** duplicateInFile: the row it duplicates. matchesExisting: the existing student id. */
   matchOf: number | string | null;
 }
@@ -219,9 +221,22 @@ export function isDemoRow(c: ImportCandidate): boolean {
 export interface PlanOptions {
   /** e.g. the owner's own address, so their Classcard test account is left out. */
   excludeEmails?: string[];
+  /**
+   * Import every row exactly as exported: no demo/excluded/duplicate skipping, no matching on email or
+   * phone. Only a row already imported (same export row number) is left alone, so re-runs are safe.
+   */
+  wholesale?: boolean;
 }
 
 export function planImport(candidates: ImportCandidate[], existing: ExistingStudent[], opts: PlanOptions = {}): PlanRow[] {
+  if (opts.wholesale) {
+    const done = new Map(existing.filter((s) => s.importRow != null).map((s) => [s.importRow!, s.id]));
+    return candidates.map((c) =>
+      done.has(c.row)
+        ? { candidate: c, action: 'matchesExisting', reasons: ['importRow'], matchOf: done.get(c.row)! }
+        : { candidate: c, action: 'create', reasons: [], matchOf: null },
+    );
+  }
   const exclude = new Set((opts.excludeEmails ?? []).map((e) => e.trim().toLowerCase()));
   const byEmail = new Map<string, string>();
   const byPhone = new Map<string, string>();

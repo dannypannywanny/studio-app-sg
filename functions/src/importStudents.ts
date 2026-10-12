@@ -11,6 +11,8 @@ export interface ImportStudentsInput {
   schoolId: string;
   rows: ImportCandidate[];
   excludeEmails?: string[];
+  /** Script-only (the callable doesn't accept it): every row as exported, see PlanOptions.wholesale. */
+  wholesale?: boolean;
 }
 
 export interface ImportStudentsResult {
@@ -34,21 +36,24 @@ export async function importStudents(db: Firestore, input: ImportStudentsInput, 
     email: d.get('email') ?? null,
     phone: d.get('phone') ?? null,
     legacyId: d.get('legacyId') ?? null,
+    importRow: d.get('importRow') ?? null,
   }));
-  const plan = planImport(input.rows, existing, { excludeEmails: input.excludeEmails });
+  const plan = planImport(input.rows, existing, { excludeEmails: input.excludeEmails, wholesale: input.wholesale });
   const toCreate = plan.filter((p) => p.action === 'create').map((p) => p.candidate);
   const batchId = randomUUID();
 
   for (let i = 0; i < toCreate.length; i += 200) {
     const batch = db.batch();
     for (const c of toCreate.slice(i, i + 200)) {
-      const ref = school.collection('students').doc();
+      // Wholesale: one fixed id per export row, so a half-finished run can be re-run safely.
+      const ref = input.wholesale ? school.collection('students').doc(`ccrow-${c.row}`) : school.collection('students').doc();
       batch.create(ref, {
         firstName: c.firstName,
         lastName: c.lastName,
         preferredName: null,
         email: c.email,
         phone: c.phone,
+        phoneRaw: c.phoneRaw || null,
         status: c.status,
         studentCode: c.legacyId,
         legacyId: c.legacyId,
@@ -58,6 +63,7 @@ export async function importStudents(db: Firestore, input: ImportStudentsInput, 
         consent: null,
         summary: { sessionsAvailable: 0, sessionsOwed: 0, outstandingCents: 0, moneyCreditCents: 0 },
         importBatchId: batchId,
+        importRow: input.wholesale ? c.row : null,
         createdAt: now(),
         updatedAt: now(),
       });
@@ -74,7 +80,7 @@ export async function importStudents(db: Firestore, input: ImportStudentsInput, 
     actorUid: actor.uid,
     action: 'importStudents',
     target: 'students',
-    detail: { batchId, created: toCreate.length, skipped: skipped.length },
+    detail: { batchId, created: toCreate.length, skipped: skipped.length, wholesale: !!input.wholesale },
     at: now(),
   });
   return { batchId, created: toCreate.length, skipped };

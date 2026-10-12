@@ -5,6 +5,8 @@
 //     pnpm --filter functions exec tsx scripts/migrate/import-students.ts --file ~/Downloads/students.csv
 //   Apply the reviewed rows ("create" rows of the review file; edit it to drop any):
 //     ... --review ../migration/raw/student-import-review.json --apply
+//   --wholesale (dry run): every row exactly as exported, nothing skipped or merged; the review file
+//   remembers the mode and --apply follows it.
 //
 // Emulator (demo-*) by default; production only with an explicit `--project class-app-sg` (scripts/target.ts).
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -34,10 +36,12 @@ async function main() {
 
   if (process.argv.includes('--apply')) {
     const reviewPath = expand(arg('review') ?? resolve(RAW, 'student-import-review.json'));
-    const review = JSON.parse(readFileSync(reviewPath, 'utf8')) as { rows: PlanRow[] };
+    const review = JSON.parse(readFileSync(reviewPath, 'utf8')) as { rows: PlanRow[]; wholesale?: boolean };
     const rows: ImportCandidate[] = review.rows.filter((r) => r.action === 'create').map((r) => r.candidate);
-    const res = await importStudents(db, { schoolId, rows, excludeEmails: exclude }, actor);
-    console.log(`Created ${res.created} students (batch ${res.batchId}); ${res.skipped.length} rows skipped on re-check.`);
+    const res = await importStudents(db, { schoolId, rows, excludeEmails: exclude, wholesale: review.wholesale }, actor);
+    console.log(
+      `Created ${res.created} students (batch ${res.batchId}${review.wholesale ? ', wholesale' : ''}); ${res.skipped.length} rows skipped on re-check.`,
+    );
     return;
   }
 
@@ -49,11 +53,13 @@ async function main() {
     email: d.get('email') ?? null,
     phone: d.get('phone') ?? null,
     legacyId: d.get('legacyId') ?? null,
+    importRow: d.get('importRow') ?? null,
   }));
-  const plan = planImport(mapClasscardRows(rows), existing, { excludeEmails: exclude });
+  const wholesale = process.argv.includes('--wholesale');
+  const plan = planImport(mapClasscardRows(rows), existing, { excludeEmails: exclude, wholesale });
   mkdirSync(RAW, { recursive: true });
   const out = resolve(RAW, 'student-import-review.json');
-  writeFileSync(out, JSON.stringify({ schoolId, headers, createdAt: new Date().toISOString(), rows: plan }, null, 2));
+  writeFileSync(out, JSON.stringify({ schoolId, headers, wholesale, createdAt: new Date().toISOString(), rows: plan }, null, 2));
 
   const issues = new Map<string, number>();
   for (const p of plan) for (const i of p.candidate.issues) issues.set(i, (issues.get(i) ?? 0) + 1);
