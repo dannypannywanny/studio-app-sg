@@ -18,7 +18,7 @@ interface LearnProfile {
   schoolId: string;
   /** Hostnames the learn site is served from (no scheme), e.g. the web.app host and the custom domain. */
   hosts: string[];
-  profile: { name: string; logoUrl: string | null; siteUrl: string | null; contactEmail: string | null; whatsapp: string | null };
+  profile: { name: string; logoUrl: string | null; siteUrl: string | null; contactEmail: string | null; whatsapp: string | null; signInNotice?: string | null };
   availability?: Record<string, Availability>;
   /** School-wide booking rules: online cancel cutoff (policy.lateCancelHours) and the per-student cap (null = none). */
   school?: { lateCancelHours?: number; maxUpcoming?: number | null };

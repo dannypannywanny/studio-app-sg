@@ -1,16 +1,89 @@
 {
-  "_note": "Learn site profile for setup-learn.ts. Public business details and booking rules only. Daniel (2026-10-13): 45-min lessons back to back (no gap), last-minute booking and cancelling allowed, 28 days ahead, no cap on bookings. Weekly hours are entered in teach (Settings > Online booking hours); listing \"weekly\" here would replace them.",
+  "_note": "Learn site profile for setup-learn.ts. Public business details and booking rules only. Daniel (2026-10-13): 45-min lessons back to back (no gap), last-minute booking and cancelling allowed, 28 days ahead, no cap on bookings. Weekly hours set 2026-10-13 from when Daniel actually taught since April (Mon-Thu evenings, Fri late afternoon, Sat/Sun afternoons). Edit them in teach (Settings > Online booking hours); re-running this script would put these back.",
   "schoolId": "sywh",
-  "hosts": ["class-app-sg-learn.web.app", "learn.singyourwayhome.sg"],
+  "hosts": [
+    "class-app-sg-learn.web.app",
+    "learn.singyourwayhome.sg"
+  ],
   "profile": {
     "name": "Sing Your Way Home",
     "logoUrl": "/schools/sywh/logo.webp",
     "siteUrl": "https://singyourwayhome.sg",
     "contactEmail": "hello@singyourwayhome.sg",
-    "whatsapp": null
+    "whatsapp": null,
+    "signInNotice": "We've moved to a new booking system. First time here? Enter the email you used with us before and we'll send you a link to sign in. There's no password to set."
   },
-  "school": { "lateCancelHours": 0, "maxUpcoming": null },
+  "school": {
+    "lateCancelHours": 0,
+    "maxUpcoming": null
+  },
   "availability": {
-    "owner-teacher": { "bookable": true, "subjectId": "voice", "lessonMin": 45, "stepMin": 15, "bufferMin": 0, "minNoticeHours": 0, "horizonDays": 28 }
+    "owner-teacher": {
+      "bookable": true,
+      "subjectId": "voice",
+      "lessonMin": 45,
+      "stepMin": 15,
+      "bufferMin": 0,
+      "minNoticeHours": 0,
+      "horizonDays": 28,
+      "weekly": [
+        {
+          "day": "MO",
+          "start": "16:00",
+          "end": "21:15",
+          "inPerson": true,
+          "online": true,
+          "locationId": "studio"
+        },
+        {
+          "day": "TU",
+          "start": "16:00",
+          "end": "22:00",
+          "inPerson": true,
+          "online": true,
+          "locationId": "studio"
+        },
+        {
+          "day": "WE",
+          "start": "16:00",
+          "end": "22:00",
+          "inPerson": true,
+          "online": true,
+          "locationId": "studio"
+        },
+        {
+          "day": "TH",
+          "start": "16:00",
+          "end": "22:00",
+          "inPerson": true,
+          "online": true,
+          "locationId": "studio"
+        },
+        {
+          "day": "FR",
+          "start": "16:00",
+          "end": "19:00",
+          "inPerson": true,
+          "online": true,
+          "locationId": "studio"
+        },
+        {
+          "day": "SA",
+          "start": "13:00",
+          "end": "19:00",
+          "inPerson": true,
+          "online": true,
+          "locationId": "studio"
+        },
+        {
+          "day": "SU",
+          "start": "14:00",
+          "end": "19:00",
+          "inPerson": true,
+          "online": true,
+          "locationId": "studio"
+        }
+      ]
+    }
   }
 }

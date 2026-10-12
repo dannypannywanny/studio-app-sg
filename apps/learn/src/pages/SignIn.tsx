@@ -89,7 +89,7 @@ export function SignIn() {
   }
 
   return (
-    <AuthShell>
+    <AuthShell showNotice>
       <h1>Your lessons, in one place</h1>
       <p className="lede">Book, check and cancel lessons, and see your sessions and invoices.</p>
       <form onSubmit={submit} className="form">

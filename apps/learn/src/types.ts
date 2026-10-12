@@ -12,6 +12,8 @@ export interface Profile {
   siteUrl?: string | null;
   contactEmail?: string | null;
   whatsapp?: string | null;
+  /** Shown above the sign-in form, e.g. a note about moving from the old booking system. */
+  signInNotice?: string | null;
   teachers?: Record<string, { name: string }>;
 }
 

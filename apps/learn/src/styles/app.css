@@ -88,6 +88,7 @@ button { font: inherit; color: inherit; }
 .auth-card { width: min(100%, 440px); background: var(--raised); border-radius: var(--r-card); padding: clamp(24px, 6vw, 36px); box-shadow: 0 1px 0 var(--line), 0 24px 48px -32px rgb(60 48 36 / 0.35); }
 .auth-card > * + * { margin-top: 14px; }
 .auth-card .btn-quiet { margin-top: 18px; }
+.auth-notice { width: min(100%, 440px); background: var(--tan-soft); color: var(--ink); border-radius: var(--r-card); padding: 14px 18px; font-size: 0.95rem; line-height: 1.5; }
 .auth-foot { color: var(--ink-2); font-size: 0.9rem; text-align: center; }
 .sent-mark { width: 56px; height: 56px; border-radius: var(--r-pill); display: grid; place-items: center; background: var(--tan-soft); color: var(--ink); }
 .skeleton-line { height: 14px; width: 60%; border-radius: var(--r-label); background: var(--surface); margin-top: 20px; }
