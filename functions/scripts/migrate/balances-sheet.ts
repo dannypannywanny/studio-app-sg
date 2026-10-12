@@ -4,6 +4,7 @@
 //   1. Make the sheet (one row per student with a Classcard invoice since the activity file starts):
 //        pnpm --filter functions exec tsx scripts/migrate/balances-sheet.ts --make \
 //          --export ~/Downloads/students.csv --activity ../migration/raw/classcard-activity.tsv
+//      Students added after the export: add a row with `row` blank and their Classcard `code`.
 //   2. Fill in `sessionsLeft` for EVERY row (0 if none), `validUntil` (YYYY-MM-DD or "none") where
 //      sessionsLeft > 0, and `moneyCreditSGD` where they have money credit (blank = 0).
 //   3. Turn it into migration/raw/opening-balances.json (refused, with the reasons, if anything's off).
@@ -101,8 +102,13 @@ function toJson() {
   const balances: OpeningBalances = { source: `balances sheet, ${new Date().toISOString().slice(0, 10)}`, lots: [], moneyCredits: [], expected: { students: 0, sessions: 0, moneyCreditCents: 0 } };
   const withBalance = new Set<string>();
   for (const r of rows) {
-    const who = `row ${r.row} (${r.code || 'no code'})`;
-    const studentId = `row:${r.row}`;
+    const who = `row ${r.row || '-'} (${r.code || 'no code'})`;
+    // Students added after the export (no export row) are found by their Classcard code instead.
+    const studentId = (r.row ?? '').trim() ? `row:${r.row}` : (r.code ?? '').trim();
+    if (!studentId) {
+      problems.push(`${who}: needs an export row or a Classcard code`);
+      continue;
+    }
     const left = (r.sessionsLeft ?? '').trim();
     if (!/^\d+$/.test(left)) {
       problems.push(`${who}: sessionsLeft must be a whole number (0 if none), not "${left}"`);
@@ -113,7 +119,7 @@ function toJson() {
     if (sessions > 0) {
       if (until !== 'none' && !/^\d{4}-\d{2}-\d{2}$/.test(until)) problems.push(`${who}: validUntil must be YYYY-MM-DD or "none"`);
       balances.lots.push({
-        legacyLotId: `sheet-row-${r.row}`, legacyStudentId: studentId, packageName: (r.packageName ?? '').trim() || 'Migrated from Classcard',
+        legacyLotId: `sheet-${studentId}`, legacyStudentId: studentId, packageName: (r.packageName ?? '').trim() || 'Migrated from Classcard',
         sessionsRemaining: sessions, validUntil: until === 'none' ? null : until, legacyInvoiceNumber: (r.latestInvoice ?? '').trim() || null,
       });
       balances.expected.sessions += sessions;
