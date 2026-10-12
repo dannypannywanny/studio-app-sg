@@ -119,3 +119,6 @@ How it decides (see `src/replay.ts`):
 lot's leftover sessions expire with its date, but lessons booked inside that validity and not yet marked
 still need them; `reopenForPending` gives exactly that many back (oldest lesson first, lot kept alive 180
 days, owed lessons settled). `applyReplay` does this itself after expiring.
+
+Python helpers for the review sheets live in `py/` (`months_sheet.py`, `reconcile_sheet.py`, `review_actions.py`);
+they read `migration/raw/replay-plan.json` and `replay-state.json` (gitignored) and need `openpyxl`.
