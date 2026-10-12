@@ -75,7 +75,13 @@ lesson from day one.
 1. Inventory the Classcard MCP tools; confirm balances, packages, invoices and
    attendance are exposed, and what the fields look like.
 2. Design the Firestore data model + security rules around that.
-3. Firebase project created: **`class-app-sg`** (project number 53869856078; CLI logged
-   in as sgvocalcoach@gmail.com). As of 2026-09-23 Firestore is NOT created yet: create
-   the (default) database in `asia-southeast1` (location is permanent), upgrade to Blaze
-   plus a budget alert, then scaffold phase 1 with two Hosting sites (teach / learn).
+3. Firebase project **`class-app-sg`** (project number 53869856078; CLI logged in as
+   sgvocalcoach@gmail.com). M0 done 2026-10-12: Blaze on billing account
+   01E2E9-E043A5-C37F84 with an S$20/month budget alert (50/90/100%); Firestore (default)
+   in `asia-southeast1` (delete protection + 7-day PITR); Storage bucket
+   `class-app-sg.firebasestorage.app` in `asia-southeast1`; Auth on Identity Platform
+   with email-link only, TOTP MFA enabled, **self sign-up disabled** (accounts come from
+   `setMemberRole`/server only); Hosting sites `class-app-sg-teach` and
+   `class-app-sg-learn`; web app "teach" (config in gitignored `apps/teach/.env.production`).
+   Authorised domains: localhost, class-app-sg.firebaseapp.com, class-app-sg-teach.web.app,
+   teach.singyourwayhome.sg. Add learn.singyourwayhome.sg at M4/M5 (Classcard still serves it).
