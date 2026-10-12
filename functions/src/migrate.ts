@@ -20,19 +20,33 @@ export interface OpeningLot {
   legacyInvoiceNumber: string | null;
 }
 
+/** An invoice still unpaid in Classcard, re-created as an open (sent) invoice. */
+export interface OpenInvoice {
+  legacyInvoiceNumber: string;
+  legacyStudentId: string;
+  /** 'YYYY-MM-DD', school time. */
+  issueDate: string;
+  dueDate: string;
+  amountCents: number;
+}
+
 export interface OpeningBalances {
   /** Where the numbers came from, kept in the audit log. */
   source: string;
   lots: OpeningLot[];
   moneyCredits: { legacyStudentId: string; cents: number }[];
+  openInvoices?: OpenInvoice[];
   /** Totals from Classcard, checked after applying. */
   expected: MigrationTotals;
 }
 
 export interface MigrationTotals {
+  /** Students with migrated sessions or money credit. */
   students: number;
   sessions: number;
   moneyCreditCents: number;
+  /** Pending cents on migrated (Classcard) invoices; checked only when given. */
+  outstandingCents?: number;
 }
 
 /**
@@ -64,8 +78,21 @@ export function checkOpeningBalances(b: OpeningBalances): string[] {
     else moneyIds.add(m.legacyStudentId);
     if (!count(m.cents)) problems.push(`${at}: cents must be a whole number >= 0`);
   });
+  const invoiceNos = new Set<string>();
+  (b.openInvoices ?? []).forEach((inv, i) => {
+    const at = `openInvoices[${i}]${inv.legacyInvoiceNumber ? ` (${inv.legacyInvoiceNumber})` : ''}`;
+    if (!inv.legacyInvoiceNumber || !/^[A-Za-z0-9-]{1,30}$/.test(inv.legacyInvoiceNumber)) problems.push(`${at}: legacyInvoiceNumber is missing or odd`);
+    else if (invoiceNos.has(inv.legacyInvoiceNumber)) problems.push(`${at}: listed twice`);
+    else invoiceNos.add(inv.legacyInvoiceNumber);
+    if (!inv.legacyStudentId) problems.push(`${at}: legacyStudentId is missing`);
+    if (!isDate(inv.issueDate ?? '') || !isDate(inv.dueDate ?? '')) problems.push(`${at}: issueDate and dueDate must be YYYY-MM-DD`);
+    if (!count(inv.amountCents) || inv.amountCents === 0) problems.push(`${at}: amountCents must be a whole number > 0`);
+  });
   for (const key of ['students', 'sessions', 'moneyCreditCents'] as const) {
     if (!count(b.expected?.[key])) problems.push(`expected.${key} must be a whole number >= 0`);
+  }
+  if (b.expected?.outstandingCents !== undefined && !count(b.expected.outstandingCents)) {
+    problems.push('expected.outstandingCents must be a whole number >= 0');
   }
   return problems;
 }
@@ -76,7 +103,7 @@ export async function applyOpeningBalances(
   balances: OpeningBalances,
   actor: Actor,
   at: Date = new Date(),
-): Promise<{ lotsCreated: number; moneyCreditsCreated: number; unknownStudents: string[] }> {
+): Promise<{ lotsCreated: number; moneyCreditsCreated: number; invoicesCreated: number; unknownStudents: string[] }> {
   const problems = checkOpeningBalances(balances);
   if (problems.length) throw new Error(`Opening balances file has problems:\n  ${problems.join('\n  ')}`);
   const school = schoolRef(db, schoolId);
@@ -162,15 +189,57 @@ export async function applyOpeningBalances(
     if (created) moneyCreditsCreated += 1;
   }
 
+  // Unpaid Classcard invoices: open invoices numbered CC-<old number>, one fixed id each (idempotent).
+  let invoicesCreated = 0;
+  const currency = ((await school.get()).get('currency') as string | undefined) ?? 'SGD';
+  for (const inv of balances.openInvoices ?? []) {
+    const studentId = byLegacy.get(inv.legacyStudentId);
+    if (!studentId) {
+      unknown.add(inv.legacyStudentId);
+      continue;
+    }
+    const created = await db.runTransaction(async (tx) => {
+      const ref = school.collection('invoices').doc(`cc-${inv.legacyInvoiceNumber}`);
+      if ((await tx.get(ref)).exists) return false;
+      const ct = new CreditTx(tx, school, actor, at);
+      const day = (d: string) => Timestamp.fromDate(wallClockToUtc(d, '09:00', tz));
+      tx.create(ref, {
+        number: `CC-${inv.legacyInvoiceNumber}`,
+        legacyInvoiceNumber: inv.legacyInvoiceNumber,
+        studentId,
+        currency,
+        lines: [{ desc: `Classcard invoice ${inv.legacyInvoiceNumber} (unpaid at migration)`, qty: 1, unitCents: inv.amountCents }],
+        subtotalCents: inv.amountCents,
+        discountCents: 0,
+        moneyCreditAppliedCents: 0,
+        totalCents: inv.amountCents,
+        paidCents: 0,
+        pendingCents: inv.amountCents,
+        status: 'sent',
+        overdueSince: null,
+        issueDate: day(inv.issueDate),
+        dueDate: day(inv.dueDate),
+        createdBy: actor.uid,
+        createdAt: now(),
+        updatedAt: now(),
+      });
+      ct.bump(studentId, { outstandingCents: inv.amountCents });
+      ct.flush();
+      return true;
+    });
+    if (created) invoicesCreated += 1;
+  }
+
   await db.runTransaction(async (tx) => {
     audit(tx, school, actor, 'applyOpeningBalances', 'migration', {
       source: balances.source,
       lotsCreated,
       moneyCreditsCreated,
+      invoicesCreated,
       unknownStudents: [...unknown],
     });
   });
-  return { lotsCreated, moneyCreditsCreated, unknownStudents: [...unknown] };
+  return { lotsCreated, moneyCreditsCreated, invoicesCreated, unknownStudents: [...unknown] };
 }
 
 /** What the migration put in, summed, compared with Classcard's totals. */
@@ -180,9 +249,10 @@ export async function validateMigration(
   expected: MigrationTotals,
 ): Promise<{ ok: boolean; actual: MigrationTotals; diffs: string[] }> {
   const school = schoolRef(db, schoolId);
-  const [ledger, money] = await Promise.all([
+  const [ledger, money, invoices] = await Promise.all([
     school.collection('ledger').where('type', '==', 'migrate').get(),
     school.collection('moneyLedger').where('type', '==', 'migrate').get(),
+    school.collection('invoices').where('legacyInvoiceNumber', '!=', null).get(),
   ]);
   const students = new Set<string>();
   let sessions = 0;
@@ -195,7 +265,12 @@ export async function validateMigration(
     students.add(m.get('studentId') as string);
     moneyCreditCents += m.get('deltaCents') as number;
   }
-  const actual = { students: students.size, sessions, moneyCreditCents };
+  const actual: MigrationTotals = { students: students.size, sessions, moneyCreditCents };
+  if (expected.outstandingCents !== undefined) {
+    actual.outstandingCents = invoices.docs
+      .filter((d) => ['sent', 'partial'].includes(d.get('status') as string))
+      .reduce((sum, d) => sum + (d.get('pendingCents') as number), 0);
+  }
   const diffs = (Object.keys(expected) as (keyof MigrationTotals)[])
     .filter((k) => expected[k] !== actual[k])
     .map((k) => `${k}: expected ${expected[k]}, found ${actual[k]}`);

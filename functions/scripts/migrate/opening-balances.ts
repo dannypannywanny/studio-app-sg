@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getFirestore } from 'firebase-admin/firestore';
+import { reconcileLedger } from '../../src/jobs';
 import { applyOpeningBalances, validateMigration, type OpeningBalances } from '../../src/migrate';
 import { initTarget } from '../target';
 
@@ -26,11 +27,14 @@ async function main() {
   const balances = JSON.parse(readFileSync(resolve(file), 'utf8')) as OpeningBalances;
 
   const res = await applyOpeningBalances(db, schoolId, balances, { uid: 'script:opening-balances', role: 'system' });
-  console.log(`Lots created: ${res.lotsCreated}, money credits: ${res.moneyCreditsCreated}`);
-  if (res.unknownStudents.length) console.log(`No student with these Classcard ids yet: ${res.unknownStudents.length}`);
+  console.log(`Lots created: ${res.lotsCreated}, money credits: ${res.moneyCreditsCreated}, open invoices: ${res.invoicesCreated}`);
+  if (res.unknownStudents.length) console.log(`No matching student for: ${res.unknownStudents.join(', ')}`);
   const check = await validateMigration(db, schoolId, balances.expected);
-  console.log(check.ok ? 'Totals match Classcard.' : `Totals differ:\n  ${check.diffs.join('\n  ')}`);
-  if (!check.ok) process.exit(2);
+  console.log(check.ok ? 'Totals match the balances file.' : `Totals differ:\n  ${check.diffs.join('\n  ')}`);
+  // Same check the nightly reconcileLedger job runs: every student's summary agrees with ledger + invoices.
+  const rec = await reconcileLedger(db, schoolId);
+  console.log(`Reconcile: ${rec.studentsChecked} students checked, ${rec.problemCount} problems${rec.problemCount ? ' (see auditLog)' : ''}.`);
+  if (!check.ok || res.unknownStudents.length || rec.problemCount) process.exit(2);
 }
 
 main().catch((err) => {

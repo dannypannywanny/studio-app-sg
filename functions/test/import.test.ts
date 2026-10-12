@@ -76,11 +76,11 @@ describe('opening balances (migration)', () => {
       expected: { students: 1, sessions: 10, moneyCreditCents: 4550 },
     };
     const res = await applyOpeningBalances(db, t.schoolId, balances, owner);
-    expect(res).toEqual({ lotsCreated: 2, moneyCreditsCreated: 1, unknownStudents: [] });
+    expect(res).toEqual({ lotsCreated: 2, moneyCreditsCreated: 1, invoicesCreated: 0, unknownStudents: [] });
     expect(await summary(t)).toEqual({ sessionsAvailable: 10, sessionsOwed: 0 });
     expect((await ledger(t)).filter((e) => e.type === 'migrate').map((e) => e.delta).sort()).toEqual([3, 7]);
 
-    expect(await applyOpeningBalances(db, t.schoolId, balances, owner)).toEqual({ lotsCreated: 0, moneyCreditsCreated: 0, unknownStudents: [] });
+    expect(await applyOpeningBalances(db, t.schoolId, balances, owner)).toEqual({ lotsCreated: 0, moneyCreditsCreated: 0, invoicesCreated: 0, unknownStudents: [] });
     expect(await validateMigration(db, t.schoolId, balances.expected)).toEqual({
       ok: true,
       actual: { students: 1, sessions: 10, moneyCreditCents: 4550 },
@@ -168,6 +168,33 @@ describe('opening balances for wholesale-imported students', () => {
     );
     expect(again).toMatchObject({ lotsCreated: 0, unknownStudents: ['SY002'] });
     await db.doc(`schools/${t.schoolId}/students/dup-sy002`).delete(); // keep the ledger invariant check clean
+  });
+});
+
+describe('unpaid Classcard invoices', () => {
+  it('become open invoices with the outstanding on the student, once, and validate', async () => {
+    const t = await school();
+    const all = mapClasscardRows(csvToObjects(fixture).rows);
+    await importStudents(db, { schoolId: t.schoolId, rows: all, wholesale: true }, owner);
+    const row = all.find((c) => c.legacyId === 'SY003')!.row;
+    const balances: OpeningBalances = {
+      source: 'test',
+      lots: [],
+      moneyCredits: [],
+      openInvoices: [{ legacyInvoiceNumber: '2024041127', legacyStudentId: `row:${row}`, issueDate: '2025-11-15', dueDate: '2025-11-15', amountCents: 30000 }],
+      expected: { students: 0, sessions: 0, moneyCreditCents: 0, outstandingCents: 30000 },
+    };
+    expect((await applyOpeningBalances(db, t.schoolId, balances, owner)).invoicesCreated).toBe(1);
+    const inv = await db.doc(`schools/${t.schoolId}/invoices/cc-2024041127`).get();
+    expect(inv.data()).toMatchObject({ number: 'CC-2024041127', status: 'sent', pendingCents: 30000, studentId: `ccrow-${row}` });
+    const stu = await db.doc(`schools/${t.schoolId}/students/ccrow-${row}`).get();
+    expect(stu.get('summary.outstandingCents')).toBe(30000);
+
+    expect((await applyOpeningBalances(db, t.schoolId, balances, owner)).invoicesCreated).toBe(0); // re-run
+    expect(await validateMigration(db, t.schoolId, balances.expected)).toMatchObject({ ok: true });
+    expect(checkOpeningBalances({ ...balances, openInvoices: [{ ...balances.openInvoices![0]!, amountCents: 0 }] })).toEqual([
+      'openInvoices[0] (2024041127): amountCents must be a whole number > 0',
+    ]);
   });
 });
 

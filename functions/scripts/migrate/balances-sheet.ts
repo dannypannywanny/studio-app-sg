@@ -6,8 +6,9 @@
 //          --export ~/Downloads/students.csv --activity ../migration/raw/classcard-activity.tsv
 //   2. Fill in `sessionsLeft` for EVERY row (0 if none), `validUntil` (YYYY-MM-DD or "none") where
 //      sessionsLeft > 0, and `moneyCreditSGD` where they have money credit (blank = 0).
-//   3. Turn it into migration/raw/opening-balances.json (refused, with the reasons, if anything's off):
-//        pnpm --filter functions exec tsx scripts/migrate/balances-sheet.ts --to-json
+//   3. Turn it into migration/raw/opening-balances.json (refused, with the reasons, if anything's off).
+//      Unpaid invoices come straight from the activity file (they matched Classcard's outstanding total):
+//        pnpm --filter functions exec tsx scripts/migrate/balances-sheet.ts --to-json --export ~/Downloads/students.csv
 //
 // No database access: it only reads and writes files in migration/raw/ (gitignored, personal data).
 // Students are keyed by export row (`row:<n>`), matching a wholesale import, so blank or shared
@@ -130,14 +131,36 @@ function toJson() {
     }
   }
   balances.expected.students = withBalance.size;
+
+  // Unpaid Classcard invoices -> open invoices, matched to export rows the same way as --make.
+  const exportFile = argValue(process.argv, 'export');
+  if (!exportFile) problems.push('Give --export <students.csv> (to place the unpaid invoices)');
+  else {
+    const students = mapClasscardRows(csvToObjects(readFileSync(expand(exportFile), 'utf8')).rows);
+    const activity = readActivity(argValue(process.argv, 'activity') ?? resolve(RAW, 'classcard-activity.tsv'));
+    balances.openInvoices = [];
+    for (const a of activity.filter((x) => x.status !== 'Paid')) {
+      const hit = matchRow(a, students);
+      if (typeof hit === 'string') {
+        problems.push(`unpaid invoice ${a.invoice}: ${hit}`);
+        continue;
+      }
+      balances.openInvoices.push({ legacyInvoiceNumber: a.invoice, legacyStudentId: `row:${hit.row}`, issueDate: a.date, dueDate: a.date, amountCents: Math.round(a.amountSGD * 100) });
+    }
+    balances.expected.outstandingCents = balances.openInvoices.reduce((sum, i) => sum + i.amountCents, 0);
+  }
   problems.push(...checkOpeningBalances(balances));
   if (problems.length) {
     console.error(`Not written. Fix the sheet:\n  ${problems.join('\n  ')}`);
     process.exit(1);
   }
-  writeFileSync(OUT, JSON.stringify(balances, null, 2) + '\n');
-  const { students, sessions, moneyCreditCents } = balances.expected;
-  console.log(`Written ${OUT}: ${students} students, ${sessions} sessions, S$${(moneyCreditCents / 100).toFixed(2)} money credit.`);
+  const out = argValue(process.argv, 'out') ? expand(argValue(process.argv, 'out')!) : OUT;
+  writeFileSync(out, JSON.stringify(balances, null, 2) + '\n');
+  const { students, sessions, moneyCreditCents, outstandingCents = 0 } = balances.expected;
+  console.log(
+    `Written ${out}: ${students} students, ${sessions} sessions, S$${(moneyCreditCents / 100).toFixed(2)} money credit, ` +
+      `${balances.openInvoices?.length ?? 0} open invoices (S$${(outstandingCents / 100).toFixed(2)}).`,
+  );
 }
 
 if (process.argv.includes('--make')) make();
