@@ -78,6 +78,7 @@ button { font: inherit; color: inherit; }
   transition: border-color 0.2s var(--ease);
 }
 .field input:focus { outline: none; border-color: var(--ink); }
+.field input.code-input { font-size: 1.5rem; letter-spacing: 0.3em; font-variant-numeric: tabular-nums; text-align: center; }
 .form-error { color: var(--danger); font-size: 0.93rem; font-weight: 500; }
 .form-error a { color: inherit; }
 

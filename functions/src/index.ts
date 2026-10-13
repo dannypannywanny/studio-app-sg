@@ -401,3 +401,14 @@ export const sendSignInLink = onCall({ secrets: [RESEND_API_KEY] }, async (req) 
   );
   return { ok: true };
 });
+
+// The 6-digit code from the same email, typed on the page that asked for it. Returns a custom token.
+const VerifySignInCode = z.object({ email: z.email().max(200), code: z.string().regex(/^\s*\d{3}\s?\d{3}\s*$/) });
+
+export const verifySignInCode = onCall(async (req) => {
+  const input = parse(VerifySignInCode, req.data);
+  const origin = req.rawRequest.headers.origin;
+  if (!origin) throw new HttpsError('invalid-argument', 'Open the sign-in page in a browser');
+  const token = await signInLinks.verifySignInCode(db(), getAuth(), { ...input, host: new URL(origin).hostname });
+  return { token };
+});

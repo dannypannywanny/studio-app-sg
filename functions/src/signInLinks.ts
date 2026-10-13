@@ -2,11 +2,16 @@
 // Firebase's noreply@<project>.firebaseapp.com, which lands in spam. The link is Firebase's email
 // sign-in link, rewritten to open the learn site's /finish-signin directly (it accepts action links).
 //
+// The same email carries a 6-digit code. Typed into the page that asked for it, the code signs in
+// *that* browser, so a student whose mail app opens links in its own built-in browser still stays
+// signed in where they actually use the portal. The code is stored hashed, works once, for
+// CODE_TTL_MS, and MAX_CODE_TRIES wrong guesses burn it.
+//
 // Only invited students get an email. Everyone else gets the same "check your inbox" answer, so the
 // form doesn't reveal who is a student. Requests are rate-limited per address.
-import { createHash } from 'node:crypto';
+import { createHash, randomInt, timingSafeEqual } from 'node:crypto';
 import type { Auth } from 'firebase-admin/auth';
-import { Timestamp, type Firestore } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
 import type { Claims } from '@lessonkaki/shared';
 import type { MailSender } from './alerts';
@@ -16,6 +21,10 @@ export const RESEND_GAP_MS = 60_000;
 /** At most this many emails per address per hour. */
 export const MAX_PER_HOUR = 5;
 const HOUR_MS = 3_600_000;
+/** How long an emailed code works. */
+export const CODE_TTL_MS = 10 * 60_000;
+/** Wrong guesses before a code stops working. */
+export const MAX_CODE_TRIES = 5;
 
 export interface SendSignInLinkInput {
   email: string;
@@ -27,16 +36,20 @@ export type SendSignInLinkOutcome = 'sent' | 'notStudent' | 'throttled';
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
-export function signInEmail(schoolName: string, link: string) {
-  const subject = `Your sign-in link for ${schoolName}`;
+export function signInEmail(schoolName: string, link: string, code: string) {
+  const subject = `${code} is your sign-in code for ${schoolName}`;
   const text = [
     'Hi,',
     '',
-    `Tap the link below to sign in to ${schoolName} and see your lessons, book and cancel:`,
+    `Your sign-in code for ${schoolName} is:`,
+    '',
+    code,
+    '',
+    'Type it on the sign-in page, or tap the link below to sign in and see your lessons, book and cancel:',
     '',
     link,
     '',
-    'The link works once. If you did not ask for it, you can ignore this email.',
+    'The code works for 10 minutes and the link for an hour, once each. If you did not ask for them, you can ignore this email.',
     '',
     schoolName,
   ].join('\n');
@@ -44,9 +57,11 @@ export function signInEmail(schoolName: string, link: string) {
   const html = `<!doctype html><html><body style="margin:0;padding:24px;background:#f4f4f2;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#161616">
 <div style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:16px;padding:32px">
 <p style="margin:0 0 16px;font-size:20px;font-weight:600">${name}</p>
-<p style="margin:0 0 24px;font-size:16px;line-height:1.5">Tap the button to sign in and see your lessons, book and cancel.</p>
+<p style="margin:0 0 8px;font-size:16px;line-height:1.5">Your sign-in code:</p>
+<p style="margin:0 0 24px;font-size:32px;font-weight:700;letter-spacing:6px">${code}</p>
+<p style="margin:0 0 24px;font-size:16px;line-height:1.5">Type it on the sign-in page, or tap the button to sign in and see your lessons, book and cancel.</p>
 <p style="margin:0 0 24px"><a href="${escapeHtml(link)}" style="display:inline-block;background:#c9ad92;color:#161616;text-decoration:none;font-weight:600;padding:14px 24px;border-radius:999px">Sign in</a></p>
-<p style="margin:0;font-size:13px;line-height:1.5;color:#55555a">The link works once. If you did not ask for it, you can ignore this email.</p>
+<p style="margin:0;font-size:13px;line-height:1.5;color:#55555a">The code works for 10 minutes and the link for an hour, once each. If you did not ask for them, you can ignore this email.</p>
 </div></body></html>`;
   return { subject, text, html };
 }
@@ -58,6 +73,19 @@ export function rewriteLink(firebaseLink: string, host: string): string {
   return `${scheme}://${host}/finish-signin${url.search}`;
 }
 
+/** The code is hashed with its doc id (the hashed email), so the stored value says nothing alone. */
+const hashCode = (docId: string, code: string) => createHash('sha256').update(`${docId}:${code}`).digest();
+
+/** The learn site's school for a request's hostname. */
+async function learnSchool(db: Firestore, host: string): Promise<string> {
+  const site = await db.collection('publicSchools').doc(host).get();
+  if (!site.exists || site.get('site') !== 'learn') throw new HttpsError('failed-precondition', 'This site is not set up for sign-in');
+  return site.get('schoolId') as string;
+}
+
+const codeDoc = (db: Firestore, schoolId: string, email: string) =>
+  db.collection('schools').doc(schoolId).collection('signInLinks').doc(createHash('sha256').update(email).digest('hex'));
+
 export async function sendSignInLink(
   db: Firestore,
   auth: Auth,
@@ -67,9 +95,7 @@ export async function sendSignInLink(
   at: Date = new Date(),
 ): Promise<SendSignInLinkOutcome> {
   const email = input.email.trim().toLowerCase();
-  const site = await db.collection('publicSchools').doc(input.host).get();
-  if (!site.exists || site.get('site') !== 'learn') throw new HttpsError('failed-precondition', 'This site is not set up for sign-in');
-  const schoolId = site.get('schoolId') as string;
+  const schoolId = await learnSchool(db, input.host);
 
   let claims: Claims = {};
   try {
@@ -81,7 +107,8 @@ export async function sendSignInLink(
 
   // Rate limit per address (hashed, so the doc id isn't the email).
   const school = db.collection('schools').doc(schoolId);
-  const ref = school.collection('signInLinks').doc(createHash('sha256').update(email).digest('hex'));
+  const ref = codeDoc(db, schoolId, email);
+  const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
   const allowed = await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const last = (snap.get('lastSentAt') as Timestamp | undefined)?.toMillis() ?? 0;
@@ -93,6 +120,9 @@ export async function sendSignInLink(
       lastSentAt: Timestamp.fromDate(at),
       windowStart: Timestamp.fromMillis(inWindow ? windowStart : at.getTime()),
       count: count + 1,
+      codeHash: hashCode(ref.id, code),
+      codeExpiresAt: Timestamp.fromMillis(at.getTime() + CODE_TTL_MS),
+      codeTries: 0,
       expireAt: Timestamp.fromMillis(at.getTime() + 24 * HOUR_MS),
     });
     return true;
@@ -104,7 +134,54 @@ export async function sendSignInLink(
   const schoolName = (schoolSnap.get('name') as string | undefined) ?? 'Student portal';
   const from = (schoolSnap.get('mail.from') as string | undefined) || opts.defaultFrom;
   const firebaseLink = await auth.generateSignInWithEmailLink(email, { url: `https://${input.host}/finish-signin`, handleCodeInApp: true });
-  const mail = signInEmail(schoolName, rewriteLink(firebaseLink, input.host));
+  const mail = signInEmail(schoolName, rewriteLink(firebaseLink, input.host), code);
   await sender.send({ from, to: [email], ...mail, idempotencyKey: `signin/${ref.id}/${at.getTime()}` });
   return 'sent';
+}
+
+export interface VerifySignInCodeInput {
+  email: string;
+  code: string;
+  /** Hostname the request came from (the learn site); decides the school. */
+  host: string;
+}
+
+const WRONG_CODE = 'That code is wrong or has expired. Check the latest email, or get a new code.';
+
+/**
+ * Checks an emailed code and returns a custom token for the student, which the page signs in with.
+ * Custom-token sign-in skips the second factor, so it's for plain student logins only: anyone with
+ * a staff role anywhere, or a second factor enrolled, signs in by link (and two-step) instead.
+ */
+export async function verifySignInCode(db: Firestore, auth: Auth, input: VerifySignInCodeInput, at: Date = new Date()): Promise<string> {
+  const email = input.email.trim().toLowerCase();
+  const schoolId = await learnSchool(db, input.host);
+  const ref = codeDoc(db, schoolId, email);
+  const given = hashCode(ref.id, input.code.replace(/\s/g, ''));
+
+  const result = await db.runTransaction(async (tx): Promise<'ok' | 'wrong' | 'used up'> => {
+    const snap = await tx.get(ref);
+    const stored = snap.get('codeHash') as Buffer | undefined;
+    const expires = (snap.get('codeExpiresAt') as Timestamp | undefined)?.toMillis() ?? 0;
+    if (!stored || at.getTime() >= expires) return 'wrong';
+    const tries = ((snap.get('codeTries') as number | undefined) ?? 0) + 1;
+    const burn = { codeHash: FieldValue.delete(), codeExpiresAt: FieldValue.delete(), codeTries: FieldValue.delete() };
+    if (stored.length === given.length && timingSafeEqual(stored, given)) {
+      tx.update(ref, burn);
+      return 'ok';
+    }
+    tx.update(ref, tries >= MAX_CODE_TRIES ? burn : { codeTries: tries });
+    return tries >= MAX_CODE_TRIES ? 'used up' : 'wrong';
+  });
+  if (result === 'used up') throw new HttpsError('resource-exhausted', 'Too many wrong codes. Get a new code and try again.');
+  if (result === 'wrong') throw new HttpsError('permission-denied', WRONG_CODE);
+
+  const user = await auth.getUserByEmail(email).catch(() => null);
+  const claims = (user?.customClaims ?? {}) as Claims;
+  if (!user || user.disabled || claims.r?.[schoolId] !== 'student') throw new HttpsError('permission-denied', WRONG_CODE);
+  const staff = Object.values(claims.r ?? {}).some((role) => role !== 'student');
+  if (staff || (user.multiFactor?.enrolledFactors.length ?? 0) > 0) {
+    throw new HttpsError('failed-precondition', 'This login has two-step sign-in. Use the link in the email instead.');
+  }
+  return auth.createCustomToken(user.uid);
 }
