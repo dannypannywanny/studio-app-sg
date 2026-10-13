@@ -56,6 +56,8 @@ export interface Student {
   phone?: string;
   status: StudentStatus;
   legacyId?: string | null;
+  /** Date the student joined the school (yyyy-MM-dd); for imports, their original sign-up date. */
+  createdOn?: string | null;
   summary?: Partial<StudentSummary> & { outstandingCents?: number; moneyCreditCents?: number };
   createdAt?: Ts;
 }
