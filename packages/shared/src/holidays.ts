@@ -2,13 +2,39 @@
 // (https://www.mom.gov.sg/employment-practices/public-holidays), checked 2026-10-13. A holiday on a Sunday
 // gives the Monday after as a holiday too; those Mondays are listed as their own entries.
 // Update yearly when MOM publishes the next year.
+// Other countries: national public holidays from the date-holidays library, worked out on the server when the
+// owner picks a country (setHolidays) and stored on the school as `holidays.dates`, refreshed monthly.
 
 export interface PublicHoliday {
   date: string;
   name: string;
 }
 
-export const HOLIDAY_COUNTRIES = { SG: 'Singapore' } as const;
+/** Countries offered in Settings (Asia first; date-holidays has data for each). */
+export const HOLIDAY_COUNTRIES = {
+  SG: 'Singapore',
+  MY: 'Malaysia',
+  ID: 'Indonesia',
+  TH: 'Thailand',
+  PH: 'Philippines',
+  VN: 'Vietnam',
+  BN: 'Brunei',
+  HK: 'Hong Kong',
+  TW: 'Taiwan',
+  CN: 'China',
+  JP: 'Japan',
+  KR: 'South Korea',
+  IN: 'India',
+  LK: 'Sri Lanka',
+  BD: 'Bangladesh',
+  PK: 'Pakistan',
+  KZ: 'Kazakhstan',
+  AE: 'United Arab Emirates',
+  SA: 'Saudi Arabia',
+  BH: 'Bahrain',
+  IL: 'Israel',
+  TR: 'Turkey',
+} as const;
 export type HolidayCountry = keyof typeof HOLIDAY_COUNTRIES;
 
 const SG: PublicHoliday[] = [
@@ -40,27 +66,39 @@ const SG: PublicHoliday[] = [
   { date: '2027-12-25', name: 'Christmas Day' },
 ];
 
-const BY_COUNTRY: Record<HolidayCountry, PublicHoliday[]> = { SG };
+/** Built-in lists, used instead of stored dates (official sources beat the library). */
+const BUILT_IN: Partial<Record<HolidayCountry, PublicHoliday[]>> = { SG };
+export const builtInHolidays = (country: HolidayCountry): PublicHoliday[] | null => BUILT_IN[country] ?? null;
 
 /** A school's holiday setting (schools/{id}.holidays). */
 export interface HolidaySettings {
   country: HolidayCountry | null;
   /** Closed on public holidays: no online booking those days, shown as time off. */
   closed: boolean;
+  /** date -> name, stored by the server for countries without a built-in list. */
+  dates: Record<string, string>;
 }
 
 export function resolveHolidaySettings(raw: unknown): HolidaySettings {
   const r = (raw ?? {}) as Record<string, unknown>;
-  const country = typeof r.country === 'string' && r.country in BY_COUNTRY ? (r.country as HolidayCountry) : null;
-  return { country, closed: country !== null && r.closed === true };
+  const country = typeof r.country === 'string' && r.country in HOLIDAY_COUNTRIES ? (r.country as HolidayCountry) : null;
+  const dates: Record<string, string> = {};
+  if (r.dates && typeof r.dates === 'object') {
+    for (const [d, n] of Object.entries(r.dates as Record<string, unknown>)) {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(d) && typeof n === 'string') dates[d] = n.slice(0, 80);
+    }
+  }
+  return { country, closed: country !== null && r.closed === true, dates };
 }
 
-/** date -> holiday name, for a country (empty when none). */
-export function holidayMap(country: HolidayCountry | null): Map<string, string> {
-  return new Map((country ? BY_COUNTRY[country] : []).map((h) => [h.date, h.name]));
+/** date -> holiday name for a school's settings (empty when no country). */
+export function holidayMap(settings: Pick<HolidaySettings, 'country' | 'dates'>): Map<string, string> {
+  if (!settings.country) return new Map();
+  const builtIn = BUILT_IN[settings.country];
+  return builtIn ? new Map(builtIn.map((h) => [h.date, h.name])) : new Map(Object.entries(settings.dates).sort());
 }
 
 /** Dates a school is closed for public holidays. */
 export function closedHolidayDates(settings: HolidaySettings): Set<string> {
-  return settings.closed ? new Set(holidayMap(settings.country).keys()) : new Set();
+  return settings.closed ? new Set(holidayMap(settings).keys()) : new Set();
 }

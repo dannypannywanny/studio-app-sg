@@ -17,7 +17,7 @@ import {
 import { BookingHours } from '../components/BookingHours';
 import { LessonTypesEditor } from '../components/LessonTypes';
 import { HOLIDAY_COUNTRIES, resolveHolidaySettings, type HolidayCountry } from '@lessonkaki/shared';
-import { db } from '../firebase';
+import { call, db } from '../firebase';
 import { useQuery, useSchool } from '../hooks';
 import { useSchoolId, useSession } from '../session';
 import type { Ts } from '../types';
@@ -191,14 +191,25 @@ const ALERT_TYPE_LABELS: Record<string, string> = {
 
 const ALERT_STATUS_LABELS: Record<string, string> = { pending: 'Sending', sent: 'Sent', skipped: 'Not sent', failed: 'Failed' };
 
+const setHolidays = call<{ schoolId: string; country: HolidayCountry | null; closed: boolean }, { country: string | null; count: number }>(
+  'setHolidays',
+);
+
 function HolidaysForm({ raw, canEdit }: { raw: unknown; canEdit: boolean }) {
+  const schoolId = useSchoolId();
   const initial = resolveHolidaySettings(raw);
   const [country, setCountry] = useState<HolidayCountry | ''>(initial.country ?? '');
   const [closed, setClosed] = useState(initial.closed);
-  const s = useSaveSchool();
-  function submit(e: FormEvent) {
+  const [state, setState] = useState<{ busy: boolean; saved: string | null; error: string | null }>({ busy: false, saved: null, error: null });
+  async function submit(e: FormEvent) {
     e.preventDefault();
-    void s.save({ holidays: { country: country || null, closed: !!country && closed } });
+    setState({ busy: true, saved: null, error: null });
+    try {
+      const res = await setHolidays({ schoolId, country: country || null, closed: !!country && closed });
+      setState({ busy: false, saved: country ? `Saved: ${res.count} public holidays loaded.` : 'Saved.', error: null });
+    } catch (err) {
+      setState({ busy: false, saved: null, error: (err as Error).message });
+    }
   }
   return (
     <form className="form-grid" onSubmit={submit}>
@@ -218,7 +229,14 @@ function HolidaysForm({ raw, canEdit }: { raw: unknown; canEdit: boolean }) {
           <input type="checkbox" checked={closed} disabled={!country} onChange={(e) => setClosed(e.target.checked)} />
           <span>Closed on public holidays (no online booking; shown as time off on the calendar)</span>
         </label>
-        <SaveRow {...s} disabled={!canEdit} />
+        <p className="muted span-all">National public holidays only; regional or state holidays aren't included. Block those with time off.</p>
+        <div className="form-actions">
+          <button className="btn btn-primary" disabled={state.busy || !canEdit}>
+            {state.busy ? 'Saving…' : 'Save'}
+          </button>
+          {state.saved && <span className="success">{state.saved}</span>}
+          {state.error && <span className="error">{state.error}</span>}
+        </div>
       </fieldset>
     </form>
   );

@@ -8,6 +8,6 @@ export function useHolidays() {
   const school = useSchool().data as { holidays?: unknown } | null;
   return useMemo(() => {
     const settings = resolveHolidaySettings(school?.holidays);
-    return { ...settings, names: holidayMap(settings.country) };
+    return { ...settings, names: holidayMap(settings) };
   }, [school?.holidays]);
 }

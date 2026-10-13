@@ -10,11 +10,12 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { onDocumentCreated, onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { defineSecret } from 'firebase-functions/params';
 import { z } from 'zod';
-import { LESSON_MODES, ROLES, WEEKDAYS, isWallDate, isWallTime } from '@lessonkaki/shared';
+import { HOLIDAY_COUNTRIES, LESSON_MODES, ROLES, WEEKDAYS, isWallDate, isWallTime, type HolidayCountry } from '@lessonkaki/shared';
 import * as alerts from './alerts';
 import { requireRole } from './auth';
 import * as attendance from './attendance';
 import * as booking from './booking';
+import * as holidays from './holidays';
 import * as credits from './credits';
 import * as lessons from './lessons';
 import * as invoicePdf from './invoicePdf';
@@ -411,4 +412,21 @@ export const verifySignInCode = onCall(async (req) => {
   if (!origin) throw new HttpsError('invalid-argument', 'Open the sign-in page in a browser');
   const token = await signInLinks.verifySignInCode(db(), getAuth(), { ...input, host: new URL(origin).hostname });
   return { token };
+});
+
+const SetHolidays = z.object({
+  schoolId: id,
+  country: z.enum(Object.keys(HOLIDAY_COUNTRIES) as [HolidayCountry, ...HolidayCountry[]]).nullable(),
+  closed: z.boolean(),
+});
+
+export const setHolidays = onCall(async (req) => {
+  const input = parse(SetHolidays, req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner']);
+  return holidays.setHolidays(db(), input, actor);
+});
+
+export const refreshHolidays = onSchedule({ ...JOB, schedule: '0 3 1 * *' }, async () => {
+  const res = await holidays.refreshAllHolidays(db());
+  console.log(`refreshHolidays: ${res.updated} schools`);
 });
