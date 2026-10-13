@@ -5,6 +5,7 @@ import { WEEKDAYS, resolvePolicy, wallDateOf, wallTimeOf, type AttendanceStatus,
 import { DAY_LABEL } from '../components/LessonForm';
 import { StudentSearch } from '../components/StudentPicker';
 import { ConflictBanner } from '../components/Conflicts';
+import { PackageSelect, setAttendeePackage } from '../components/PackagePick';
 import { useSubjects } from '../components/LessonTypes';
 import { call, db } from '../firebase';
 import { studentName, useDoc, useFormatTs, useQuery, useSchool, useStudents, useTeachers, useTimeZone } from '../hooks';
@@ -426,6 +427,19 @@ export function LessonPanel({
                     {s?.summary?.sessionsAvailable ?? 0} credits left
                   </span>
                 </div>
+                {!cancelled && !a.ledgerEntryId && (a.status === 'booked' || a.status === 'present' || a.status === 'absent') && (
+                  <PackageSelect
+                    studentId={a.studentId}
+                    value={a.preferredEnrolmentId ?? null}
+                    disabled={busy !== null}
+                    onChange={(enrolmentId) =>
+                      run(`${a.studentId}:package`, async () => {
+                        await setAttendeePackage({ schoolId, lessonId, studentId: a.studentId, enrolmentId });
+                        return `${studentName(s)}: ${enrolmentId ? 'package chosen' : 'back to earliest expiry'}.`;
+                      })
+                    }
+                  />
+                )}
                 {cancelling === a.studentId ? (
                   <CancelChoice
                     late={isLate}

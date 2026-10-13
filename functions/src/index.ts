@@ -169,6 +169,12 @@ export const addAttendee = onCall(async (req) => {
   return attendance.addAttendee(db(), input, actor);
 });
 
+export const setAttendeePackage = onCall(async (req) => {
+  const input = parse(Attendee.extend({ enrolmentId: id.nullable() }), req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
+  return attendance.setAttendeePackage(db(), input, actor);
+});
+
 export const removeAttendee = onCall(async (req) => {
   const input = parse(Attendee, req.data);
   const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);

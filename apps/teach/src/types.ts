@@ -144,5 +144,7 @@ export interface Attendee {
   owed: boolean;
   enrolmentId: string | null;
   ledgerEntryId: string | null;
+  /** Package staff chose to pay for this lesson (null = earliest expiry). */
+  preferredEnrolmentId?: string | null;
   markedAt: Ts | null;
 }

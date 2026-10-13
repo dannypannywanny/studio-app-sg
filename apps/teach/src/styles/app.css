@@ -495,3 +495,7 @@ body.sheet-open { overflow: hidden; }
   box-shadow: inset 3px 0 0 var(--warn-line); font-size: var(--text-sm);
 }
 .conflict ul { margin: 4px 0 0; padding-left: 1.1em; }
+.package-select { width: min(100%, 420px); min-height: var(--control-h-sm) !important; font-size: var(--text-sm) !important; }
+.package-picks { display: grid; gap: 6px; }
+.package-pick { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; color: var(--ink); font-weight: 500; }
+.package-pick > span { min-width: 140px; }

@@ -8,6 +8,8 @@ import { useLessonTypes } from './LessonTypes';
 import { ConflictBanner } from './Conflicts';
 import { useOpenLesson } from './LessonSheet';
 import { StudentMultiPicker } from './StudentPicker';
+import { PackageSelect, setAttendeePackage } from './PackagePick';
+import { studentName, useStudents } from '../hooks';
 import { useSchoolId, useSession } from '../session';
 
 interface Shape {
@@ -64,6 +66,17 @@ export function LessonForm({ onDone, initialDate }: { onDone: () => void; initia
   const [typeKey, setTypeKey] = useState('');
   const [minutes, setMinutes] = useState<number | null>(null);
   const [studentIds, setStudentIds] = useState<string[]>([]);
+  const [packages, setPackages] = useState<Record<string, string | null>>({});
+  const students = useStudents();
+  // Choices made in the form, applied to the new lesson(s) once they exist.
+  const applyPackages = (lessonIds: string[]) =>
+    Promise.all(
+      lessonIds.flatMap((lessonId) =>
+        studentIds
+          .filter((id) => packages[id])
+          .map((studentId) => setAttendeePackage({ schoolId, lessonId, studentId, enrolmentId: packages[studentId] ?? null })),
+      ),
+    );
   const [isOnline, setOnline] = useState(false);
   const [repeats, setRepeats] = useState(false);
   const [byDay, setByDay] = useState<Weekday[] | null>(null);
@@ -91,10 +104,12 @@ export function LessonForm({ onDone, initialDate }: { onDone: () => void; initia
     try {
       if (repeats) {
         const res = await createSeries({ ...shape, startDate: date, time, byDay: days, until: until || null, skipConflicts });
+        await applyPackages(res.lessonIds);
         onDone();
         if (res.lessonIds[0]) openLesson(res.lessonIds[0]);
       } else {
         const { lessonId } = await createLesson({ ...shape, startAt: wallClockToUtc(date, time, tz).toISOString() });
+        await applyPackages([lessonId]);
         onDone();
         openLesson(lessonId);
       }
@@ -189,6 +204,16 @@ export function LessonForm({ onDone, initialDate }: { onDone: () => void; initia
       <fieldset className="field span-all">
         <legend>Students</legend>
         <StudentMultiPicker value={studentIds} onChange={setStudentIds} />
+        {studentIds.length > 0 && (
+          <div className="package-picks">
+            {studentIds.map((id) => (
+              <label key={id} className="package-pick">
+                <span>{studentName(students.byId.get(id))}</span>
+                <PackageSelect studentId={id} value={packages[id] ?? null} onChange={(v) => setPackages({ ...packages, [id]: v })} />
+              </label>
+            ))}
+          </div>
+        )}
       </fieldset>
       <div className="form-actions">
         <button className="btn btn-primary" disabled={busy}>
