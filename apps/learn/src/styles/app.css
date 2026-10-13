@@ -294,6 +294,13 @@ button { font: inherit; color: inherit; }
 .pkg-title { font-weight: 600; }
 .paid-note { background: var(--surface); border-radius: var(--r-card); padding: 24px; display: grid; gap: 10px; justify-items: start; }
 
+/* Buy page */
+.buy-card { background: var(--raised); border-radius: var(--r-card); padding: 24px; display: grid; gap: 16px; box-shadow: 0 1px 0 var(--line); max-width: 460px; }
+.buy-price { font-family: var(--font-display); font-weight: 600; font-size: 2.4rem; letter-spacing: -0.03em; line-height: 1; }
+.buy-points { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.buy-points li { display: flex; gap: 10px; align-items: flex-start; color: var(--ink-2); }
+.buy-points svg { color: var(--tan-deep); flex: none; margin-top: 3px; }
+
 /* ---------- Payments ---------- */
 .invoices li + li { border-top: 1px solid var(--line); }
 .inv { display: flex; align-items: center; gap: 12px; padding: 16px 0; text-decoration: none; }

@@ -8,6 +8,12 @@ import { useProfile, useSiteSchoolId } from '../hooks';
 import { useSession } from '../session';
 
 export const EMAIL_KEY = 'lk.learn.emailForSignIn';
+export const NEXT_KEY = 'lk.learn.next';
+
+/** Where to go after signing in: a same-site path only. */
+export function safeNext(raw: string | null): string | null {
+  return raw && /^\/[A-Za-z0-9/_?=&%-]*$/.test(raw) && !raw.startsWith('//') ? raw : null;
+}
 
 // Production: LessonKaki emails the link from the school's own domain (Firebase's sender lands in spam).
 // The emulator can't send email, so dev keeps Firebase's flow and its "open the link" button.
@@ -24,6 +30,9 @@ async function latestEmulatorLink(email: string): Promise<string | null> {
 
 function remember(email: string) {
   try {
+    const next = safeNext(new URLSearchParams(window.location.search).get('next'));
+    if (next) window.localStorage.setItem(NEXT_KEY, next);
+    else window.localStorage.removeItem(NEXT_KEY);
     window.localStorage.setItem(EMAIL_KEY, email);
   } catch {
     // Private mode: the finish page asks for the email again.
@@ -41,7 +50,7 @@ export function SignIn() {
   const site = useSiteSchoolId();
   const profile = useProfile(site.schoolId);
 
-  if (ready && user) return <Navigate to="/" replace />;
+  if (ready && user) return <Navigate to={safeNext(new URLSearchParams(window.location.search).get('next')) ?? '/'} replace />;
 
   async function signUp(e: FormEvent) {
     e.preventDefault();

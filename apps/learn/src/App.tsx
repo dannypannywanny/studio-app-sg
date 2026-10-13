@@ -4,6 +4,7 @@ import { Layout } from './Layout';
 import { auth } from './firebase';
 import { useProfile, useSiteSchoolId } from './hooks';
 import { Book } from './pages/Book';
+import { Buy } from './pages/Buy';
 import { FinishSignIn } from './pages/FinishSignIn';
 import { Home } from './pages/Home';
 import { InvoiceDetail } from './pages/InvoiceDetail';
@@ -31,7 +32,11 @@ function RequireStudent({ children }: { children: ReactNode }) {
   const { ready, user, studentId } = useSession();
   const location = useLocation();
   if (!ready) return <div className="boot" aria-busy="true" />;
-  if (!user) return <Navigate to="/sign-in" replace state={{ from: location.pathname }} />;
+  if (!user) {
+    // Coming to buy from the pricing page: likely new, so open sign-up; come back here after the link.
+    const next = encodeURIComponent(location.pathname + location.search);
+    return <Navigate to={`/sign-in?next=${next}${location.pathname.startsWith('/buy/') ? '&signup' : ''}`} replace />;
+  }
   if (!studentId) return <NotAStudent />;
   return children;
 }
@@ -63,6 +68,7 @@ export function App() {
           >
             <Route index element={<Home />} />
             <Route path="book" element={<Book />} />
+            <Route path="buy/:packageId" element={<Buy />} />
             <Route path="payments" element={<Payments />} />
             <Route path="payments/:invoiceId" element={<InvoiceDetail />} />
             <Route path="*" element={<Navigate to="/" replace />} />

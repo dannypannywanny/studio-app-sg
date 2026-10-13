@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router';
 import { resolveActionLink } from '@lessonkaki/shared';
 import { AuthShell } from '../components/AuthShell';
 import { auth } from '../firebase';
-import { EMAIL_KEY } from './SignIn';
+import { EMAIL_KEY, NEXT_KEY, safeNext } from './SignIn';
 
 const stored = () => {
   try {
@@ -57,7 +57,14 @@ export function FinishSignIn() {
     try {
       await signInWithEmailLink(auth, withEmail, href);
       forget();
-      navigate('/', { replace: true });
+      let next: string | null = null;
+      try {
+        next = safeNext(window.localStorage.getItem(NEXT_KEY));
+        window.localStorage.removeItem(NEXT_KEY);
+      } catch {
+        // storage blocked: go home
+      }
+      navigate(next ?? '/', { replace: true });
     } catch (err) {
       setError(signInError((err as { code?: string }).code));
       setBusy(false);
