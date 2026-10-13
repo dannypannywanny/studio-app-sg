@@ -7,8 +7,120 @@ import { centsToDecimal, formatDate, formatMoney, parseMoney, wallClockToUtc, wa
 import { call, db } from '../firebase';
 import { studentName, useDoc, useQuery, useStudents, useTimeZone } from '../hooks';
 import { useSchoolId } from '../session';
-import type { Invoice, Payment, PaymentMethod } from '../types';
+import type { Enrolment, Invoice, Payment, PaymentMethod } from '../types';
 import { invoiceBadge } from './Invoices';
+
+const editInvoice = call<
+  {
+    schoolId: string;
+    invoiceId: string;
+    number?: string;
+    dueDate?: string;
+    discount?: { kind: 'percent' | 'amount'; value: number } | null;
+    validUntil?: string | null;
+    note?: string | null;
+  },
+  { changed: string[] }
+>('editInvoice');
+
+/** Edit what Classcard let you change on an invoice: number, due date, discount, package expiry, notes. */
+function EditInvoice({ inv, onDone }: { inv: Invoice & { id: string }; onDone: (msg: string | null) => void }) {
+  const schoolId = useSchoolId();
+  const tz = useTimeZone();
+  const lots = useQuery<Enrolment>(`invoiceLots:${inv.id}`, () =>
+    query(collection(db, 'schools', schoolId, 'enrolments'), where('invoiceId', '==', inv.id)),
+  );
+  const lot = lots.data.find((l) => l.status === 'active') ?? lots.data[0];
+  const lotNever = lot ? lot.validUntil.toDate().getUTCFullYear() >= 2900 : false;
+  const lotDate = lot && !lotNever ? wallDateOf(lot.validUntil.toDate(), tz) : '';
+  const subtotal = inv.subtotalCents ?? inv.totalCents;
+
+  const [number, setNumber] = useState(inv.number);
+  const [due, setDue] = useState(wallDateOf(inv.dueDate.toDate(), tz));
+  const [kind, setKind] = useState<'percent' | 'amount'>('amount');
+  const [discount, setDiscount] = useState(inv.discountCents ? centsToDecimal(inv.discountCents) : '');
+  const [expiry, setExpiry] = useState<string | null>(null);
+  const [never, setNever] = useState<boolean | null>(null);
+  const [note, setNote] = useState(inv.note ?? '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const value = Number(discount) || 0;
+  const discountCents = Math.min(subtotal, Math.max(0, kind === 'percent' ? Math.round((subtotal * Math.min(value, 100)) / 100) : Math.round(value * 100)));
+  const expiryValue = expiry ?? lotDate;
+  const neverValue = never ?? lotNever;
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    const changes: Parameters<typeof editInvoice>[0] = { schoolId, invoiceId: inv.id };
+    if (number.trim() !== inv.number) changes.number = number.trim();
+    if (due !== wallDateOf(inv.dueDate.toDate(), tz)) changes.dueDate = due;
+    if (discountCents !== (inv.discountCents ?? 0)) changes.discount = discountCents ? { kind: 'amount', value: discountCents } : null;
+    if (lot && (neverValue !== lotNever || (!neverValue && expiryValue !== lotDate))) changes.validUntil = neverValue ? null : expiryValue;
+    if ((note.trim() || null) !== (inv.note ?? null)) changes.note = note.trim() || null;
+    try {
+      const res = await editInvoice(changes);
+      onDone(res.changed.length ? 'Invoice updated.' : null);
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="card form-grid" onSubmit={save}>
+      <h2 className="span-all">Edit invoice</h2>
+      <label className="field">
+        <span>Invoice no.</span>
+        <input value={number} onChange={(e) => setNumber(e.target.value)} maxLength={40} required />
+      </label>
+      <label className="field">
+        <span>Due date</span>
+        <input type="date" value={due} onChange={(e) => setDue(e.target.value)} required />
+      </label>
+      <div className="field">
+        <span>Discount (subtotal {formatMoney(subtotal, inv.currency)})</span>
+        <div className="row discount-row">
+          <select value={kind} onChange={(e) => setKind(e.target.value as 'percent' | 'amount')} aria-label="Discount type">
+            <option value="amount">Amount</option>
+            <option value="percent">%</option>
+          </select>
+          <input type="number" min={0} step={kind === 'percent' ? 1 : 0.01} value={discount} onChange={(e) => setDiscount(e.target.value)} aria-label="Discount" placeholder="0" />
+        </div>
+        <span className="field-help">
+          New total {formatMoney(subtotal - discountCents - (inv.moneyCreditAppliedCents ?? 0), inv.currency)}
+        </span>
+      </div>
+      {lot && (
+        <>
+          <label className="field">
+            <span>Package expiry ({lot.packageName})</span>
+            <input type="date" value={neverValue ? '' : expiryValue} disabled={neverValue} onChange={(e) => setExpiry(e.target.value)} />
+          </label>
+          <label className="field checkbox">
+            <input type="checkbox" checked={neverValue} onChange={(e) => setNever(e.target.checked)} />
+            <span>No expiry</span>
+          </label>
+        </>
+      )}
+      <label className="field span-all">
+        <span>Notes (staff only, not on the PDF)</span>
+        <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} maxLength={2000} />
+      </label>
+      <div className="form-actions">
+        <button className="btn btn-primary" disabled={busy}>
+          {busy ? 'Saving…' : 'Save changes'}
+        </button>
+        <button type="button" className="btn btn-ghost" onClick={() => onDone(null)}>
+          Cancel
+        </button>
+        {error && <p className="error">{error}</p>}
+      </div>
+    </form>
+  );
+}
 
 interface RecordPaymentResult {
   invoiceStatus: string;
@@ -269,6 +381,7 @@ export function InvoiceDetail() {
   );
   const [paying, setPaying] = useState(false);
   const [voiding, setVoiding] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   if (invoice.loading) return <p className="muted">Loading…</p>;
@@ -293,10 +406,14 @@ export function InvoiceDetail() {
             {formatDate(inv.issueDate.toDate(), tz)} · due {formatDate(inv.dueDate.toDate(), tz)}
             {inv.status === 'void' && inv.voidReason ? ` · void: ${inv.voidReason}` : ''}
           </p>
-          {inv.note && <p className="staff-note">Note: {inv.note}</p>}
         </div>
         <div className="row">
           <PdfButton invoiceId={inv.id} number={inv.number} />
+          {inv.status !== 'void' && !editing && (
+            <button className="btn" onClick={() => setEditing(true)}>
+              Edit
+            </button>
+          )}
           {open && (
             <button className="btn btn-primary" onClick={() => setPaying(true)}>
               Record payment
@@ -313,6 +430,28 @@ export function InvoiceDetail() {
         <p className="success" role="status">
           {notice}
         </p>
+      )}
+      {editing && (
+        <EditInvoice
+          inv={inv}
+          onDone={(msg) => {
+            setEditing(false);
+            if (msg) setNotice(msg);
+          }}
+        />
+      )}
+      {!editing && (
+        <div className="card stack invoice-notes">
+          <div className="row">
+            <h2>Notes</h2>
+            {inv.status !== 'void' && (
+              <button className="btn btn-sm btn-ghost" onClick={() => setEditing(true)}>
+                {inv.note ? 'Edit' : 'Add a note'}
+              </button>
+            )}
+          </div>
+          {inv.note ? <p className="staff-note">{inv.note}</p> : <p className="muted">No notes. Notes stay in LessonKaki and are not printed on the PDF.</p>}
+        </div>
       )}
 
       <div className="tiles">

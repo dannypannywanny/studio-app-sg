@@ -6,7 +6,7 @@
 // has been paid; refunds and credit notes arrive in M7).
 import { Timestamp, type Firestore } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
-import type { InvoiceStatus } from '@lessonkaki/shared';
+import { NO_EXPIRY, wallClockToUtc, type InvoiceStatus } from '@lessonkaki/shared';
 import { enqueueAlert } from './alerts';
 import { CreditTx } from './creditTx';
 import { audit, notFound, now, readAll, schoolRef, type Actor } from './db';
@@ -271,4 +271,110 @@ export async function markOverdueAll(db: Firestore, at: Date = new Date()): Prom
   let flagged = 0;
   for (const s of (await db.collection('schools').get()).docs) flagged += (await markOverdue(db, s.id, at)).flagged;
   return { flagged };
+}
+
+// ---------------------------------------------------------------------------------------------
+// editInvoice: the details staff fix after a sale (number, due date, discount, package expiry, notes)
+// ---------------------------------------------------------------------------------------------
+
+export interface EditInvoiceInput {
+  schoolId: string;
+  invoiceId: string;
+  number?: string;
+  /** Wall date (school zone). */
+  dueDate?: string;
+  /** Replaces the discount; null removes it. */
+  discount?: { kind: 'percent' | 'amount'; value: number } | null;
+  /** Expiry of the package(s) this invoice sold: wall date (inclusive) or null = never. */
+  validUntil?: string | null;
+  /** Staff notes (never on the PDF). */
+  note?: string | null;
+}
+
+const DAY = 86_400_000;
+
+export async function editInvoice(db: Firestore, input: EditInvoiceInput, actor: Actor, at: Date = new Date()) {
+  const school = schoolRef(db, input.schoolId);
+  const invoiceRef = school.collection('invoices').doc(input.invoiceId);
+  return db.runTransaction(async (tx) => {
+    const [invSnap, schoolSnap] = await readAll(tx, invoiceRef, school);
+    if (!invSnap.exists) notFound('Invoice');
+    const inv = invSnap.data()!;
+    if (inv.status === 'void') throw new HttpsError('failed-precondition', 'This invoice is void');
+    const tz = (schoolSnap.get('timezone') as string | undefined) ?? 'Asia/Singapore';
+    const update: Record<string, unknown> = {};
+    const changed: string[] = [];
+
+    if (input.number !== undefined) {
+      const number = input.number.trim();
+      if (!number) throw new HttpsError('invalid-argument', 'The invoice number cannot be empty');
+      if (number !== inv.number) {
+        const dup = await tx.get(school.collection('invoices').where('number', '==', number).limit(1));
+        if (!dup.empty) throw new HttpsError('already-exists', `Invoice ${number} already exists`);
+        update.number = number;
+        changed.push('number');
+      }
+    }
+
+    const lots =
+      input.validUntil !== undefined ? (await tx.get(school.collection('enrolments').where('invoiceId', '==', input.invoiceId))).docs : [];
+
+    if (input.dueDate !== undefined) {
+      const due = wallClockToUtc(input.dueDate, '00:00', tz);
+      update.dueDate = Timestamp.fromDate(due);
+      // The daily overdue job flags it again if it's still late.
+      if (due.getTime() + DAY > at.getTime()) update.overdueSince = null;
+      changed.push('dueDate');
+    }
+
+    let pendingDelta = 0;
+    if (input.discount !== undefined) {
+      const subtotal = (inv.subtotalCents as number | undefined) ?? (inv.totalCents as number);
+      const d = input.discount;
+      const discountCents = !d
+        ? 0
+        : Math.min(subtotal, Math.max(0, d.kind === 'percent' ? Math.round((subtotal * Math.min(d.value, 100)) / 100) : Math.round(d.value)));
+      const credit = (inv.moneyCreditAppliedCents as number | undefined) ?? 0;
+      const total = Math.max(0, subtotal - discountCents - credit);
+      const paid = (inv.paidCents as number | undefined) ?? 0;
+      if (total < paid) {
+        throw new HttpsError('failed-precondition', 'More has been paid than the new total. Record a refund first, or use a smaller discount.');
+      }
+      const pending = total - paid;
+      pendingDelta = pending - (inv.pendingCents as number);
+      const status: InvoiceStatus = pending === 0 ? 'paid' : paid > 0 ? 'partial' : 'sent';
+      Object.assign(update, {
+        discountCents,
+        totalCents: total,
+        pendingCents: pending,
+        status,
+        ...(pending === 0 ? { overdueSince: null, paidAt: inv.paidAt ?? Timestamp.fromDate(at) } : {}),
+      });
+      changed.push('discount');
+    }
+
+    if (input.note !== undefined) {
+      update.note = input.note?.trim().slice(0, 2000) || null;
+      changed.push('note');
+    }
+
+    // ---- writes ----
+    if (pendingDelta) {
+      const ct = new CreditTx(tx, school, actor, at);
+      ct.bump(inv.studentId as string, { outstandingCents: pendingDelta });
+      ct.flush();
+    }
+    if (input.validUntil !== undefined) {
+      const until =
+        input.validUntil === null ? NO_EXPIRY : new Date(wallClockToUtc(input.validUntil, '00:00', tz).getTime() + DAY - 1);
+      for (const l of lots) {
+        if (l.get('status') !== 'active') continue; // expired or void packages stay as they were
+        tx.update(l.ref, { validUntil: Timestamp.fromDate(until), updatedAt: now() });
+      }
+      changed.push('validUntil');
+    }
+    if (Object.keys(update).length) tx.update(invoiceRef, { ...update, updatedAt: now() });
+    audit(tx, school, actor, 'editInvoice', `invoices/${input.invoiceId}`, { changed });
+    return { changed };
+  });
 }

@@ -511,3 +511,4 @@ body.sheet-open { overflow: hidden; }
 .sale-total { font-size: 1rem; }
 .staff-note { margin-top: 8px; padding: 8px 12px; border-radius: 10px; background: var(--tan-soft); color: var(--ink); font-size: var(--text-sm); white-space: pre-wrap; max-width: 60ch; }
 .att-notes { margin-top: 0; }
+.invoice-notes .row { justify-content: space-between; }

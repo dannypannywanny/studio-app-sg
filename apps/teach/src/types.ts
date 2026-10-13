@@ -96,6 +96,7 @@ export interface Invoice {
   currency: string;
   subtotalCents: number;
   discountCents: number;
+  moneyCreditAppliedCents?: number;
   totalCents: number;
   paidCents: number;
   pendingCents: number;

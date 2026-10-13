@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { setAttendance } from '../src/attendance';
-import { markOverdue, recordPayment, voidInvoice, type PaymentMethod } from '../src/money';
+import { editInvoice, markOverdue, recordPayment, voidInvoice, type PaymentMethod } from '../src/money';
 import { DAY, db, ledger, lesson, lot, money, owner, sell, summary, withInvariant, type TestSchool } from './helpers';
 
 const school = withInvariant();
@@ -127,5 +127,40 @@ describe('markOverdue', () => {
     expect((await invoice(t, old.invoiceId)).overdueSince).toBeTruthy(); // still owes money
     await pay(t, old.invoiceId, 20000);
     expect((await invoice(t, old.invoiceId)).overdueSince).toBeNull();
+  });
+});
+
+describe('editInvoice', () => {
+  const edit = (t: TestSchool, invoiceId: string, changes: Record<string, unknown>) =>
+    editInvoice(db, { schoolId: t.schoolId, invoiceId, ...changes }, owner);
+  const inv = async (t: TestSchool, id: string) => (await db.doc(`schools/${t.schoolId}/invoices/${id}`).get()).data()!;
+
+  it('renames, re-dates, discounts (moving the outstanding balance) and keeps notes', async () => {
+    const t = await school();
+    const sale = await sell(t, t.pkg30);
+    await edit(t, sale.invoiceId, { number: 'CC-1234', dueDate: '2030-01-31', discount: { kind: 'percent', value: 20 }, note: 'Promo price agreed' });
+    expect(await inv(t, sale.invoiceId)).toMatchObject({ number: 'CC-1234', discountCents: 6000, totalCents: 24000, pendingCents: 24000, status: 'sent', note: 'Promo price agreed' });
+    expect((await money(t)).outstandingCents).toBe(24000);
+    await edit(t, sale.invoiceId, { discount: null });
+    expect((await money(t)).outstandingCents).toBe(30000);
+  });
+
+  it('a discount down to what was paid marks it paid; below that is refused; numbers stay unique', async () => {
+    const t = await school();
+    const sale = await sell(t, t.pkg30);
+    await recordPayment(db, { schoolId: t.schoolId, invoiceId: sale.invoiceId, amountCents: 25000, method: 'paynow', idempotencyKey: randomUUID() }, owner);
+    await edit(t, sale.invoiceId, { discount: { kind: 'amount', value: 5000 } });
+    expect(await inv(t, sale.invoiceId)).toMatchObject({ status: 'paid', pendingCents: 0 });
+    await expect(edit(t, sale.invoiceId, { discount: { kind: 'amount', value: 6000 } })).rejects.toThrow(/More has been paid/);
+    const other = await sell(t, t.pkg30);
+    const taken = (await inv(t, sale.invoiceId)).number;
+    await expect(edit(t, other.invoiceId, { number: taken })).rejects.toThrow(/already exists/);
+  });
+
+  it("changes the package's expiry", async () => {
+    const t = await school();
+    const sale = await sell(t, t.pkg30);
+    await edit(t, sale.invoiceId, { validUntil: '2031-03-15' });
+    expect((await lot(t, sale.enrolmentId)).validUntil.toDate().toISOString()).toBe('2031-03-15T15:59:59.999Z');
   });
 });

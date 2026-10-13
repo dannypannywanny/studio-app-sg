@@ -277,6 +277,22 @@ export const recordPayment = onCall(async (req) => {
   return money.recordPayment(db(), { ...input, paidAt: input.paidAt ? new Date(input.paidAt) : undefined }, actor);
 });
 
+const EditInvoice = z.object({
+  schoolId: id,
+  invoiceId: id,
+  number: z.string().max(40).optional(),
+  dueDate: z.string().refine(isWallDate).optional(),
+  discount: z.object({ kind: z.enum(['percent', 'amount']), value: z.number().min(0).max(100_000_000) }).nullable().optional(),
+  validUntil: z.string().refine(isWallDate).nullable().optional(),
+  note: z.string().max(2000).nullable().optional(),
+});
+
+export const editInvoice = onCall(async (req) => {
+  const input = parse(EditInvoice, req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
+  return money.editInvoice(db(), input, actor);
+});
+
 const VoidInvoice = z.object({
   schoolId: id,
   invoiceId: id,
