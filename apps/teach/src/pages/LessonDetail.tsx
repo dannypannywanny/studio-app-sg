@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from 'react-router';
 import { WEEKDAYS, resolvePolicy, wallDateOf, wallTimeOf, type AttendanceStatus, type Weekday } from '@lessonkaki/shared';
 import { DAY_LABEL } from '../components/LessonForm';
 import { StudentSearch } from '../components/StudentPicker';
+import { useSubjects } from '../components/LessonTypes';
 import { call, db } from '../firebase';
 import { studentName, useDoc, useFormatTs, useQuery, useSchool, useStudents, useTeachers, useTimeZone } from '../hooks';
 import { useSchoolId } from '../session';
@@ -263,6 +264,7 @@ export function LessonPanel({
   );
   const students = useStudents();
   const teachers = useTeachers();
+  const subjects = useSubjects();
   const policy = resolvePolicy(useSchool().data?.policy);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -343,7 +345,7 @@ export function LessonPanel({
         <div>
           <Title className="lesson-title">{fmt(l.startAt)}</Title>
           <p className="muted">
-            {l.durationMin} min · {l.isOnline ? 'Online' : 'In studio'} · with{' '}
+            {subjects.data.find((s) => s.id === l.subjectId)?.name ?? 'Lesson'} · {l.durationMin} min · {l.isOnline ? 'Online' : 'In studio'} · with{' '}
             {teachers.byId.get(l.teacherId)?.displayName ?? '—'}
             {l.seriesId && ' · weekly series'}
           </p>

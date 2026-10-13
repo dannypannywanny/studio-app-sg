@@ -42,6 +42,8 @@ export function StudentSearch({
     onPick(s.id);
     setQ('');
     setActive(0);
+    // Close the list so it doesn't cover the buttons below; typing or ↓ opens it again.
+    setOpen(false);
     inputRef.current?.focus();
   }
 
@@ -86,7 +88,7 @@ export function StudentSearch({
           setActive(0);
           setOpen(true);
         }}
-        onFocus={() => setOpen(true)}
+        onClick={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         onKeyDown={onKey}
       />

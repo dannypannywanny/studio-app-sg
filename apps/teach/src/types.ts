@@ -27,11 +27,16 @@ export interface Teacher {
   displayName: string;
   email?: string;
   active: boolean;
+  /** Subjects this teacher teaches (online booking reads this too). */
+  subjectIds?: string[];
 }
 
 export interface Subject {
   name: string;
+  /** Lengths offered, in minutes, e.g. [30, 45, 60]. Older docs only have defaultDurationMin. */
+  durations?: number[];
   defaultDurationMin: number;
+  teacherIds?: string[];
   active: boolean;
 }
 

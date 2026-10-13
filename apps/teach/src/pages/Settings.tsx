@@ -15,10 +15,11 @@ import {
   type CreditPolicy,
 } from '@lessonkaki/shared';
 import { BookingHours } from '../components/BookingHours';
+import { LessonTypesEditor } from '../components/LessonTypes';
 import { db } from '../firebase';
 import { useQuery, useSchool } from '../hooks';
 import { useSchoolId, useSession } from '../session';
-import type { Subject, Ts } from '../types';
+import type { Ts } from '../types';
 
 function Section({ title, children, note }: { title: string; note?: string; children: ReactNode }) {
   return (
@@ -415,13 +416,8 @@ export function Settings() {
       <Section title="Branding" note={ownerNote ?? 'Colours, fonts and logo for this school. Leave blank to use the LessonKaki defaults.'}>
         <BrandingForm branding={data.branding ?? {}} canEdit={isOwner} />
       </Section>
-      <Section title="Subjects">
-        <NamedList<Subject>
-          path="subjects"
-          label="subject"
-          extra={(s) => `${s.defaultDurationMin ?? 60} min default`}
-          make={(name) => ({ name, teacherIds: [], defaultDurationMin: 60 })}
-        />
+      <Section title="Lessons offered" note="Each subject's lengths and who teaches it. New lessons are picked from these, e.g. “Voice lessons with Daniel · 45 min”.">
+        <LessonTypesEditor />
       </Section>
       <Section title="Locations">
         <NamedList<Location>
