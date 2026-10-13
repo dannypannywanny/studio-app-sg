@@ -1,6 +1,7 @@
 import { collection, query, where } from 'firebase/firestore';
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router';
+import { useLessonHref } from '../components/LessonSheet';
 import { formatDate, formatMoney, type LedgerType } from '@lessonkaki/shared';
 import { PortalAccess } from '../components/PortalAccess';
 import { call, db } from '../firebase';
@@ -172,6 +173,7 @@ export function StudentDetail() {
   const { role } = useSession();
   const tz = useTimeZone();
   const fmt = useFormatTs();
+  const lessonHref = useLessonHref();
   const student = useDoc<Student>(`schools/${schoolId}/students/${studentId}`);
   const byStudent = (name: string) => () =>
     query(collection(db, 'schools', schoolId, name), where('studentId', '==', studentId));
@@ -294,7 +296,7 @@ export function StudentDetail() {
                   </td>
                   <td className={`num ${e.delta < 0 ? 'neg' : 'pos'}`}>{e.delta > 0 ? `+${e.delta}` : e.delta}</td>
                   <td>{e.enrolmentId ? (lotName.get(e.enrolmentId) ?? '—') : '—'}</td>
-                  <td>{e.lessonId ? <Link to={`/lessons/${e.lessonId}`}>View</Link> : '—'}</td>
+                  <td>{e.lessonId ? <Link to={lessonHref(e.lessonId)}>View</Link> : '—'}</td>
                 </tr>
               ))}
             </tbody>

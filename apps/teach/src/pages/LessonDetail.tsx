@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { WEEKDAYS, resolvePolicy, wallDateOf, wallTimeOf, type AttendanceStatus, type Weekday } from '@lessonkaki/shared';
 import { DAY_LABEL } from '../components/LessonForm';
+import { StudentSearch } from '../components/StudentPicker';
 import { call, db } from '../firebase';
 import { studentName, useDoc, useFormatTs, useQuery, useSchool, useStudents, useTeachers, useTimeZone } from '../hooks';
 import { useSchoolId } from '../session';
@@ -231,8 +232,29 @@ function CancelChoice({
   );
 }
 
+/** The lesson as a page (/lessons/:id). Elsewhere it opens in the side sheet (LessonSheet). */
 export function LessonDetail() {
   const { lessonId = '' } = useParams();
+  return (
+    <section className="stack">
+      <p>
+        <Link to="/lessons">← Lessons</Link>
+      </p>
+      <LessonPanel lessonId={lessonId} variant="page" />
+    </section>
+  );
+}
+
+/** Lesson details, reschedule, cancel and attendance. `onClose` is how the sheet leaves after a series change. */
+export function LessonPanel({
+  lessonId,
+  variant,
+  onClose,
+}: {
+  lessonId: string;
+  variant: 'page' | 'sheet';
+  onClose?: () => void;
+}) {
   const schoolId = useSchoolId();
   const fmt = useFormatTs();
   const lesson = useDoc<Lesson>(`schools/${schoolId}/lessons/${lessonId}`);
@@ -246,12 +268,13 @@ export function LessonDetail() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
-  const [adding, setAdding] = useState('');
   const [confirmCancelLesson, setConfirmCancelLesson] = useState(false);
   const [reason, setReason] = useState('');
   const [cancelScope, setCancelScope] = useState<Scope>('one');
   const [rescheduling, setRescheduling] = useState(false);
   const navigate = useNavigate();
+  // After a series change the lessons around this one move, so leave for the calendar.
+  const leave = () => (variant === 'sheet' && onClose ? onClose() : navigate('/calendar'));
 
   async function run(key: string, fn: () => Promise<string | null>) {
     setBusy(key);
@@ -285,12 +308,10 @@ export function LessonDetail() {
       return `${studentName(students.byId.get(studentId))} removed. ${CHARGE_TEXT[res.charge]}`;
     });
 
-  const add = () =>
+  const add = (studentId: string) =>
     run('add', async () => {
-      await addAttendee({ schoolId, lessonId, studentId: adding });
-      const name = studentName(students.byId.get(adding));
-      setAdding('');
-      return `${name} added.`;
+      await addAttendee({ schoolId, lessonId, studentId });
+      return `${studentName(students.byId.get(studentId))} added.`;
     });
 
   const cancelWholeLesson = () =>
@@ -302,7 +323,7 @@ export function LessonDetail() {
         return `Lesson cancelled. ${res.restored} credit${res.restored === 1 ? '' : 's'} returned.`;
       }
       const res = await editLesson({ schoolId, lessonId, scope: cancelScope, cancel: { reason: why } });
-      navigate('/calendar');
+      leave();
       return `Series ended: ${res.deleted + res.cancelled} upcoming lessons removed, ${res.restored} credits returned.`;
     });
 
@@ -313,19 +334,14 @@ export function LessonDetail() {
   const hoursToStart = (l.startAt.toMillis() - Date.now()) / 3_600_000;
   const isLate = hoursToStart < policy.lateCancelHours;
   const visible = attendees.data.filter((a) => a.status !== 'removed');
-  const onLesson = new Set(visible.map((a) => a.studentId));
-  const addable = students.data
-    .filter((s) => s.status === 'active' && !onLesson.has(s.id))
-    .sort((a, b) => studentName(a).localeCompare(studentName(b)));
+  const onLesson = visible.map((a) => a.studentId);
+  const Title = variant === 'page' ? 'h1' : 'h2';
 
   return (
-    <section className="stack">
-      <p>
-        <Link to="/lessons">← Lessons</Link>
-      </p>
+    <div className={`stack lesson-panel lesson-${variant}`}>
       <div className="page-head">
         <div>
-          <h1>{fmt(l.startAt)}</h1>
+          <Title className="lesson-title">{fmt(l.startAt)}</Title>
           <p className="muted">
             {l.durationMin} min · {l.isOnline ? 'Online' : 'In studio'} · with{' '}
             {teachers.byId.get(l.teacherId)?.displayName ?? '—'}
@@ -356,7 +372,7 @@ export function LessonDetail() {
           onDone={(msg, moved) => {
             setRescheduling(false);
             setNotice(msg);
-            if (moved) navigate('/calendar');
+            if (moved) leave();
           }}
         />
       )}
@@ -385,101 +401,78 @@ export function LessonDetail() {
         <h2>Attendance</h2>
         {notice && <p className="success" role="status">{notice}</p>}
         {error && <p className="error">{error}</p>}
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Student</th>
-              <th>Status</th>
-              <th>Credit</th>
-              <th className="num">Credits left</th>
-              <th>Mark</th>
-            </tr>
-          </thead>
-          <tbody>
-            {visible.map((a) => {
-              const s = students.byId.get(a.studentId);
-              return (
-                <tr key={a.id}>
-                  <td>
-                    <Link to={`/students/${a.studentId}`}>{studentName(s)}</Link>
-                  </td>
-                  <td>
-                    <span className={`badge badge-${a.status}`}>{STATUS_LABEL[a.status]}</span>
-                  </td>
-                  <td>
-                    {a.owed ? (
-                      <span className="badge badge-warn">Owed</span>
-                    ) : a.ledgerEntryId ? (
-                      'Used 1 credit'
-                    ) : (
-                      <span className="muted">—</span>
-                    )}
-                  </td>
-                  <td className="num" data-testid={`balance-${a.studentId}`}>
-                    {s?.summary?.sessionsAvailable ?? 0}
-                  </td>
-                  <td>
-                    {cancelling === a.studentId ? (
-                      <CancelChoice
-                        late={isLate}
-                        hours={policy.lateCancelHours}
-                        returnsCredit={policy.lateCancelReturnsCredit}
-                        busy={busy !== null}
-                        onPick={(mode) => cancel(a.studentId, mode)}
-                        onBack={() => setCancelling(null)}
-                      />
-                    ) : (
-                      <div className="row">
-                        {ACTIONS.map((act) => (
-                          <button
-                            key={act.status}
-                            className={`btn btn-sm ${act.className}`}
-                            disabled={a.status === act.status || busy !== null || cancelled}
-                            onClick={() => mark(a.studentId, act.status)}
-                          >
-                            {busy === `${a.studentId}:${act.status}` ? '…' : act.label}
-                          </button>
-                        ))}
-                        <button
-                          className="btn btn-sm"
-                          disabled={busy !== null || cancelled || a.status === 'cancelled' || a.status === 'lateCancelled'}
-                          onClick={() => setCancelling(a.studentId)}
-                        >
-                          Cancel…
-                        </button>
-                        <button
-                          className="btn btn-sm btn-ghost"
-                          disabled={busy !== null || cancelled}
-                          onClick={() => remove(a.studentId)}
-                          title="Take this student off the lesson"
-                        >
-                          {busy === `${a.studentId}:remove` ? '…' : 'Remove'}
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <ul className="att-list">
+          {visible.map((a) => {
+            const s = students.byId.get(a.studentId);
+            return (
+              <li key={a.id} className="att">
+                <div className="att-head">
+                  <Link className="att-name" to={`/students/${a.studentId}`}>
+                    {studentName(s)}
+                  </Link>
+                  <span className={`badge badge-${a.status}`}>{STATUS_LABEL[a.status]}</span>
+                  {a.owed ? (
+                    <span className="badge badge-warn">Owed</span>
+                  ) : a.ledgerEntryId ? (
+                    <span className="muted att-note">Used 1 credit</span>
+                  ) : null}
+                  <span className="muted att-note att-left" data-testid={`balance-${a.studentId}`}>
+                    {s?.summary?.sessionsAvailable ?? 0} credits left
+                  </span>
+                </div>
+                {cancelling === a.studentId ? (
+                  <CancelChoice
+                    late={isLate}
+                    hours={policy.lateCancelHours}
+                    returnsCredit={policy.lateCancelReturnsCredit}
+                    busy={busy !== null}
+                    onPick={(mode) => cancel(a.studentId, mode)}
+                    onBack={() => setCancelling(null)}
+                  />
+                ) : (
+                  <div className="row">
+                    {ACTIONS.map((act) => (
+                      <button
+                        key={act.status}
+                        className={`btn btn-sm ${act.className}`}
+                        disabled={a.status === act.status || busy !== null || cancelled}
+                        onClick={() => mark(a.studentId, act.status)}
+                      >
+                        {busy === `${a.studentId}:${act.status}` ? '…' : act.label}
+                      </button>
+                    ))}
+                    <button
+                      className="btn btn-sm"
+                      disabled={busy !== null || cancelled || a.status === 'cancelled' || a.status === 'lateCancelled'}
+                      onClick={() => setCancelling(a.studentId)}
+                    >
+                      Cancel…
+                    </button>
+                    <button
+                      className="btn btn-sm btn-ghost"
+                      disabled={busy !== null || cancelled}
+                      onClick={() => remove(a.studentId)}
+                      title="Take this student off the lesson"
+                    >
+                      {busy === `${a.studentId}:remove` ? '…' : 'Remove'}
+                    </button>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
         {visible.length === 0 && <p className="empty">No students on this lesson.</p>}
         {!cancelled && (
-          <div className="row">
-            <select value={adding} onChange={(e) => setAdding(e.target.value)} aria-label="Add a student">
-              <option value="">Add a student…</option>
-              {addable.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {studentName(s)}
-                </option>
-              ))}
-            </select>
-            <button className="btn btn-sm" disabled={!adding || busy !== null} onClick={add}>
-              {busy === 'add' ? 'Adding…' : 'Add to lesson'}
-            </button>
-          </div>
+          <StudentSearch
+            label="Add a student"
+            placeholder={busy === 'add' ? 'Adding…' : 'Add a student: search by name, email or phone'}
+            exclude={onLesson}
+            disabled={busy !== null}
+            onPick={add}
+          />
         )}
       </div>
-    </section>
+    </div>
   );
 }

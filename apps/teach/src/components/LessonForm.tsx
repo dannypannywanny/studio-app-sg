@@ -1,10 +1,11 @@
 // New lesson: one-off or weekly series. Used by the calendar and the lesson list.
 import { collection, query } from 'firebase/firestore';
 import { useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router';
 import { WEEKDAYS, wallClockToUtc, wallDateOf, weekdayOf, type Weekday } from '@lessonkaki/shared';
 import { call, db } from '../firebase';
-import { studentName, useQuery, useStudents, useTeachers, useTimeZone } from '../hooks';
+import { useQuery, useTeachers, useTimeZone } from '../hooks';
+import { useOpenLesson } from './LessonSheet';
+import { StudentMultiPicker } from './StudentPicker';
 import { useSchoolId, useSession } from '../session';
 import type { Subject } from '../types';
 
@@ -52,8 +53,7 @@ export function LessonForm({ onDone, initialDate }: { onDone: () => void; initia
   const schoolId = useSchoolId();
   const { teacherId: myTeacherId } = useSession();
   const tz = useTimeZone();
-  const navigate = useNavigate();
-  const students = useStudents();
+  const openLesson = useOpenLesson();
   const teachers = useTeachers();
   const subjects = useQuery<Subject>(`subjects:${schoolId}`, () => query(collection(db, 'schools', schoolId, 'subjects')));
 
@@ -75,11 +75,6 @@ export function LessonForm({ onDone, initialDate }: { onDone: () => void; initia
   const teacher = teacherId || teachers.data[0]?.id || '';
   const subject = subjectId || subjects.data[0]?.id || '';
   const days = byDay ?? [weekdayOf(date)];
-  const active = students.data
-    .filter((s) => s.status === 'active')
-    .sort((a, b) => studentName(a).localeCompare(studentName(b)));
-
-  const toggle = (id: string) => setStudentIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
   const toggleDay = (d: Weekday) =>
     setByDay(days.includes(d) ? days.filter((x) => x !== d) : WEEKDAYS.filter((x) => x === d || days.includes(x)));
 
@@ -93,11 +88,11 @@ export function LessonForm({ onDone, initialDate }: { onDone: () => void; initia
       if (repeats) {
         const res = await createSeries({ ...shape, startDate: date, time, byDay: days, until: until || null, skipConflicts });
         onDone();
-        navigate(`/lessons/${res.lessonIds[0]}`);
+        if (res.lessonIds[0]) openLesson(res.lessonIds[0]);
       } else {
         const { lessonId } = await createLesson({ ...shape, startAt: wallClockToUtc(date, time, tz).toISOString() });
         onDone();
-        navigate(`/lessons/${lessonId}`);
+        openLesson(lessonId);
       }
     } catch (err) {
       const e = err as CallableError;
@@ -185,15 +180,7 @@ export function LessonForm({ onDone, initialDate }: { onDone: () => void; initia
       )}
       <fieldset className="field span-all">
         <legend>Students</legend>
-        <div className="chips">
-          {active.map((s) => (
-            <label key={s.id} className={`chip ${studentIds.includes(s.id) ? 'on' : ''}`}>
-              <input type="checkbox" checked={studentIds.includes(s.id)} onChange={() => toggle(s.id)} />
-              {studentName(s)}
-            </label>
-          ))}
-          {active.length === 0 && <span className="muted">No active students yet.</span>}
-        </div>
+        <StudentMultiPicker value={studentIds} onChange={setStudentIds} />
       </fieldset>
       <div className="form-actions">
         <button className="btn btn-primary" disabled={busy}>
