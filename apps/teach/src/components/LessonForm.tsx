@@ -6,6 +6,7 @@ import { call } from '../firebase';
 import { useTimeZone } from '../hooks';
 import { useLessonTypes } from './LessonTypes';
 import { ConflictBanner } from './Conflicts';
+import { useRooms } from './Rooms';
 import { useOpenLesson } from './LessonSheet';
 import { StudentMultiPicker } from './StudentPicker';
 import { PackageSelect, setAttendeePackage } from './PackagePick';
@@ -19,6 +20,7 @@ interface Shape {
   durationMin: number;
   studentIds: string[];
   isOnline: boolean;
+  locationId: string | null;
 }
 
 const createLesson = call<Shape & { startAt: string }, { lessonId: string }>('createLesson');
@@ -67,6 +69,9 @@ export function LessonForm({ onDone, initialDate }: { onDone: () => void; initia
   const [minutes, setMinutes] = useState<number | null>(null);
   const [studentIds, setStudentIds] = useState<string[]>([]);
   const [packages, setPackages] = useState<Record<string, string | null>>({});
+  const places = useRooms();
+  const [roomId, setRoomId] = useState('');
+  const room = places.rooms.find((r) => r.id === roomId) ?? places.rooms[0] ?? null;
   const students = useStudents();
   // Choices made in the form, applied to the new lesson(s) once they exist.
   const applyPackages = (lessonIds: string[]) =>
@@ -100,7 +105,8 @@ export function LessonForm({ onDone, initialDate }: { onDone: () => void; initia
     if (repeats && days.length === 0) return setError('Pick at least one weekday.');
     setBusy(true);
     setError(null);
-    const shape = { schoolId, teacherId: type.teacherId, subjectId: type.subjectId, durationMin, studentIds, isOnline };
+    const locationId = isOnline ? (places.online?.id ?? null) : (room?.id ?? null);
+    const shape = { schoolId, teacherId: type.teacherId, subjectId: type.subjectId, durationMin, studentIds, isOnline, locationId };
     try {
       if (repeats) {
         const res = await createSeries({ ...shape, startDate: date, time, byDay: days, until: until || null, skipConflicts });
@@ -172,7 +178,28 @@ export function LessonForm({ onDone, initialDate }: { onDone: () => void; initia
           onChange={(e) => setMinutes(Number(e.target.value))}
         />
       </label>
-      {type && <ConflictBanner teacherId={type.teacherId} date={date} time={time} durationMin={durationMin} repeats={repeats} />}
+      {places.many && !isOnline && (
+        <label className="field">
+          <span>Room</span>
+          <select value={room?.id ?? ''} onChange={(e) => setRoomId(e.target.value)}>
+            {places.rooms.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {type && (
+        <ConflictBanner
+          teacherId={type.teacherId}
+          roomId={isOnline ? null : (room?.id ?? null)}
+          date={date}
+          time={time}
+          durationMin={durationMin}
+          repeats={repeats}
+        />
+      )}
       <label className="field checkbox">
         <input type="checkbox" checked={isOnline} onChange={(e) => setOnline(e.target.checked)} />
         <span>Online</span>

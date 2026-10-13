@@ -6,10 +6,12 @@ import { db } from '../firebase';
 import { studentName, useQuery, useStudents, useTimeZone } from '../hooks';
 import { useSchoolId } from '../session';
 import type { Lesson } from '../types';
+import { useRooms } from './Rooms';
 import { offLabel, timeOffRange, useTimeOff } from './TimeOff';
 
 export function ConflictBanner({
   teacherId,
+  roomId = null,
   date,
   time,
   durationMin,
@@ -17,6 +19,8 @@ export function ConflictBanner({
   ignoreLessonId,
 }: {
   teacherId: string;
+  /** In-person room: another teacher's lesson there clashes too. */
+  roomId?: string | null;
   date: string;
   time: string;
   durationMin: number;
@@ -30,10 +34,11 @@ export function ConflictBanner({
   const valid = /^\d{4}-\d{2}-\d{2}$/.test(date) && /^\d{2}:\d{2}$/.test(time) && durationMin > 0;
   const dayStart = valid ? wallClockToUtc(addDays(date, -1), '12:00', tz) : new Date(0);
   const dayEnd = valid ? wallClockToUtc(addDays(date, 1), '00:00', tz) : new Date(0);
-  const lessons = useQuery<Lesson>(valid ? `conflicts:${schoolId}:${teacherId}:${date}` : null, () =>
+  const places = useRooms();
+  // The whole day's lessons (any teacher), filtered below by this teacher or this room.
+  const lessons = useQuery<Lesson>(valid ? `conflicts:${schoolId}:${date}` : null, () =>
     query(
       collection(db, 'schools', schoolId, 'lessons'),
-      where('teacherId', '==', teacherId),
       where('startAt', '>=', Timestamp.fromDate(dayStart)),
       where('startAt', '<', Timestamp.fromDate(dayEnd)),
     ),
@@ -43,7 +48,12 @@ export function ConflictBanner({
   const end = start + durationMin * 60_000;
 
   const clashes = lessons.data.filter(
-    (l) => l.id !== ignoreLessonId && l.status !== 'cancelled' && l.startAt.toMillis() < end && l.endAt.toMillis() > start,
+    (l) =>
+      l.id !== ignoreLessonId &&
+      l.status !== 'cancelled' &&
+      l.startAt.toMillis() < end &&
+      l.endAt.toMillis() > start &&
+      (l.teacherId === teacherId || (roomId !== null && !l.isOnline && l.locationId === roomId)),
   );
   const blocked = offs.filter((o) => {
     if (o.teacherId !== teacherId) return false;
@@ -70,7 +80,8 @@ export function ConflictBanner({
       <ul>
         {clashes.map((l) => (
           <li key={l.id}>
-            Lesson {fmt(l.startAt.toMillis())}–{fmt(l.endAt.toMillis())} ·{' '}
+            {l.teacherId === teacherId ? 'Lesson' : `${places.byId.get(roomId ?? '')?.name ?? 'Room'} in use`} {fmt(l.startAt.toMillis())}–
+            {fmt(l.endAt.toMillis())} ·{' '}
             {l.studentIds.map((id) => studentName(students.byId.get(id))).join(', ') || 'no students'}
           </li>
         ))}

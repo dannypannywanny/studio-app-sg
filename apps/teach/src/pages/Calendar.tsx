@@ -6,6 +6,7 @@ import { Link, useSearchParams } from 'react-router';
 import { WEEKDAYS, addDays, startOfWeek, wallClockToUtc, wallDateOf, wallTimeOf, weekdayOf } from '@lessonkaki/shared';
 import { DAY_LABEL, LessonForm } from '../components/LessonForm';
 import { useLessonHref } from '../components/LessonSheet';
+import { useRooms } from '../components/Rooms';
 import { TimeOffDetail, TimeOffForm, offEndMin, offLabel, offStartMin, useTimeOff, type PlacedOff } from '../components/TimeOff';
 import { db } from '../firebase';
 import { studentName, useQuery, useStudents, useTeachers, useTimeZone, type WithId } from '../hooks';
@@ -79,6 +80,8 @@ export function Calendar() {
   const urlDate = params.get('date');
   const date = isDate(urlDate) ? urlDate : today;
   const [teacherFilter, setTeacherFilter] = useState('');
+  const [roomFilter, setRoomFilter] = useState('');
+  const places = useRooms();
   const [adding, setAdding] = useState<string | null>(null);
   const [blocking, setBlocking] = useState<string | null>(null);
   const [openOff, setOpenOff] = useState<PlacedOff | null>(null);
@@ -122,13 +125,14 @@ export function Calendar() {
     () =>
       lessons.data
         .filter((l) => !teacherFilter || l.teacherId === teacherFilter)
+        .filter((l) => !roomFilter || (!l.isOnline && l.locationId === roomFilter))
         .map((l) => {
           const start = l.startAt.toDate();
           const time = wallTimeOf(start, tz);
           const names = l.studentIds.map((id) => studentName(students.byId.get(id))).join(', ');
           return { l, date: wallDateOf(start, tz), time, startMin: minutesOf(time), names };
         }),
-    [lessons.data, teacherFilter, tz, students.byId],
+    [lessons.data, teacherFilter, roomFilter, tz, students.byId],
   );
 
   return (
@@ -154,6 +158,16 @@ export function Calendar() {
               </option>
             ))}
           </select>
+          {places.many && (
+            <select value={roomFilter} onChange={(e) => setRoomFilter(e.target.value)} aria-label="Room">
+              <option value="">All rooms</option>
+              {places.rooms.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+          )}
           <div className="row">
             <button className="btn" onClick={() => step(-1)} aria-label={`Previous ${view}`}>
               ←
@@ -237,6 +251,32 @@ export function Calendar() {
   );
 }
 
+/** Side-by-side lanes for overlapping lessons: lane index and lane count of each lesson's overlap group. */
+function lanesOf(items: Placed[]) {
+  const sorted = [...items].sort((a, b) => a.startMin - b.startMin);
+  const out = new Map<string, { lane: number; lanes: number }>();
+  let group: Placed[] = [];
+  let groupEnd = -1;
+  let laneEnds: number[] = [];
+  const close = () => {
+    for (const p of group) out.get(p.l.id)!.lanes = laneEnds.length;
+    group = [];
+    laneEnds = [];
+  };
+  for (const p of sorted) {
+    const end = p.startMin + p.l.durationMin;
+    if (p.startMin >= groupEnd) close();
+    let lane = laneEnds.findIndex((e) => e <= p.startMin);
+    if (lane === -1) lane = laneEnds.push(end) - 1;
+    else laneEnds[lane] = end;
+    out.set(p.l.id, { lane, lanes: 1 });
+    group.push(p);
+    groupEnd = Math.max(groupEnd, end);
+  }
+  close();
+  return out;
+}
+
 interface GridProps {
   today: string;
   placed: Placed[];
@@ -247,6 +287,8 @@ interface GridProps {
 }
 
 function TimeGrid({ days, today, placed, offs, onOff, lessonHref, onDay }: GridProps & { days: string[] }) {
+  const places = useRooms();
+  const roomName = (id: string | null | undefined) => (id ? places.byId.get(id)?.name : undefined);
   const shown = placed.filter((p) => days.includes(p.date));
   const shownOff = offs.filter((o) => days.includes(o.entry.date));
   const firstHour = Math.min(DEFAULT_FIRST_HOUR, ...shown.map((p) => Math.floor(p.startMin / 60)));
@@ -305,9 +347,12 @@ function TimeGrid({ days, today, placed, offs, onOff, lessonHref, onDay }: GridP
                   </button>
                 );
               })}
-            {shown
-              .filter((p) => p.date === d)
-              .map(({ l, startMin, time, names }) => (
+            {(() => {
+              const today_ = shown.filter((p) => p.date === d);
+              const lanes = lanesOf(today_);
+              return today_.map(({ l, startMin, time, names }) => {
+                const { lane, lanes: n } = lanes.get(l.id)!;
+                return (
                 <Link
                   key={l.id}
                   to={lessonHref(l.id)}
@@ -315,6 +360,7 @@ function TimeGrid({ days, today, placed, offs, onOff, lessonHref, onDay }: GridP
                   style={{
                     top: ((startMin - firstHour * 60) / 60) * HOUR_PX,
                     height: Math.max((l.durationMin / 60) * HOUR_PX - 2, 20),
+                    ...(n > 1 ? { left: `calc(${(lane / n) * 100}% + 2px)`, right: 'auto', width: `calc(${100 / n}% - 4px)` } : {}),
                   }}
                   title={`${time} · ${names}`}
                 >
@@ -323,14 +369,16 @@ function TimeGrid({ days, today, placed, offs, onOff, lessonHref, onDay }: GridP
                     {single && (
                       <span className="cal-event-len">
                         {' '}
-                        · {l.durationMin} min{l.isOnline ? ' · online' : ''}
+                        · {l.durationMin} min · {l.isOnline ? 'online' : (roomName(l.locationId) ?? 'in person')}
                       </span>
                     )}
                   </strong>{' '}
                   {names || 'No students'}
                   {l.seriesId && <span className="cal-repeat" aria-label="weekly"> ↻</span>}
                 </Link>
-              ))}
+                );
+              });
+            })()}
           </div>
         ))}
       </div>

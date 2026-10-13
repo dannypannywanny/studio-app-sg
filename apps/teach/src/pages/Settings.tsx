@@ -419,7 +419,10 @@ export function Settings() {
       <Section title="Lessons offered" note="Each subject's lengths and who teaches it. New lessons are picked from these, e.g. “Voice lessons with Daniel · 45 min”.">
         <LessonTypesEditor />
       </Section>
-      <Section title="Locations">
+      <Section
+        title="Rooms and locations"
+        note="Each in-person location is a room. With more than one room, lessons get a room picker and the calendar a room filter; with one, every lesson uses it. Locations named Online or Zoom are for online lessons."
+      >
         <NamedList<Location>
           path="locations"
           label="location"

@@ -5,6 +5,7 @@ import { WEEKDAYS, resolvePolicy, wallDateOf, wallTimeOf, type AttendanceStatus,
 import { DAY_LABEL } from '../components/LessonForm';
 import { StudentSearch } from '../components/StudentPicker';
 import { ConflictBanner } from '../components/Conflicts';
+import { useRooms } from '../components/Rooms';
 import { PackageSelect, setAttendeePackage } from '../components/PackagePick';
 import { useSubjects } from '../components/LessonTypes';
 import { call, db } from '../firebase';
@@ -43,7 +44,7 @@ const editLesson = call<
     schoolId: string;
     lessonId: string;
     scope: Scope;
-    changes?: { date?: string; time?: string; durationMin?: number; teacherId?: string; byDay?: Weekday[] };
+    changes?: { date?: string; time?: string; durationMin?: number; teacherId?: string; byDay?: Weekday[]; locationId?: string | null };
     cancel?: { reason: string | null };
     skipConflicts?: boolean;
   },
@@ -87,10 +88,13 @@ function Reschedule({ lesson, onDone }: { lesson: Lesson & { id: string }; onDon
   const [time, setTime] = useState(wallTimeOf(start, tz));
   const [durationMin, setDuration] = useState(lesson.durationMin);
   const [teacherId, setTeacherId] = useState(lesson.teacherId);
+  const places = useRooms();
+  const [roomId, setRoomId] = useState(lesson.locationId ?? '');
   const [byDay, setByDay] = useState<Weekday[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const days = byDay ?? series.data?.byDay ?? [];
+  const roomChanged = !lesson.isOnline && !!roomId && roomId !== (lesson.locationId ?? '');
 
   async function save(skipConflicts = false) {
     setBusy(true);
@@ -98,8 +102,8 @@ function Reschedule({ lesson, onDone }: { lesson: Lesson & { id: string }; onDon
     try {
       const changes =
         scope === 'one'
-          ? { date, time, durationMin, teacherId }
-          : { time, durationMin, teacherId, ...(byDay ? { byDay } : {}) };
+          ? { date, time, durationMin, teacherId, ...(roomChanged ? { locationId: roomId } : {}) }
+          : { time, durationMin, teacherId, ...(byDay ? { byDay } : {}), ...(roomChanged ? { locationId: roomId } : {}) };
       const res = await editLesson({ schoolId, lessonId: lesson.id, scope, changes, skipConflicts });
       onDone(
         scope === 'one'
@@ -158,8 +162,28 @@ function Reschedule({ lesson, onDone }: { lesson: Lesson & { id: string }; onDon
             ))}
           </select>
         </label>
+        {places.many && !lesson.isOnline && (
+          <label className="field">
+            <span>Room</span>
+            <select value={roomId} onChange={(e) => setRoomId(e.target.value)}>
+              {!roomId && <option value="">Pick a room</option>}
+              {places.rooms.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {scope === 'one' && (
-          <ConflictBanner teacherId={teacherId} date={date} time={time} durationMin={durationMin} ignoreLessonId={lesson.id} />
+          <ConflictBanner
+            teacherId={teacherId}
+            roomId={lesson.isOnline ? null : roomId || null}
+            date={date}
+            time={time}
+            durationMin={durationMin}
+            ignoreLessonId={lesson.id}
+          />
         )}
       </div>
       <div className="row">
@@ -270,6 +294,7 @@ export function LessonPanel({
   const students = useStudents();
   const teachers = useTeachers();
   const subjects = useSubjects();
+  const places = useRooms();
   const policy = resolvePolicy(useSchool().data?.policy);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -350,7 +375,7 @@ export function LessonPanel({
         <div>
           <Title className="lesson-title">{fmt(l.startAt)}</Title>
           <p className="muted">
-            {subjects.data.find((s) => s.id === l.subjectId)?.name ?? 'Lesson'} · {l.durationMin} min · {l.isOnline ? 'Online' : 'In studio'} · with{' '}
+            {subjects.data.find((s) => s.id === l.subjectId)?.name ?? 'Lesson'} · {l.durationMin} min · {l.isOnline ? 'Online' : (places.byId.get(l.locationId ?? '')?.name ?? 'In person')} · with{' '}
             {teachers.byId.get(l.teacherId)?.displayName ?? '—'}
             {l.seriesId && ' · weekly series'}
           </p>
