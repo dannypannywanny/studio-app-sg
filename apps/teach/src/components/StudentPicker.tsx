@@ -5,7 +5,6 @@ import type { Student } from '../types';
 
 const MAX_RESULTS = 8;
 
-const rank = (s: Student) => (s.status === 'active' ? 0 : 1);
 const haystack = (s: Student) => `${studentName(s)} ${s.firstName} ${s.email ?? ''} ${s.phone ?? ''}`.toLowerCase();
 
 /** Search box with a result list. Calls onPick with the chosen student; `exclude` hides ids already chosen. */
@@ -33,10 +32,10 @@ export function StudentSearch({
     const terms = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
     const skip = new Set(exclude);
     return students.data
-      // Everyone except archived: past students (inactive) come back and book again.
+      // Active/inactive (from Classcard) doesn't matter here; only archived records (merged duplicates) are left out.
       .filter((s) => s.status !== 'archived' && !skip.has(s.id))
       .filter((s) => terms.every((t) => haystack(s).includes(t)))
-      .sort((a, b) => rank(a) - rank(b) || studentName(a).localeCompare(studentName(b)))
+      .sort((a, b) => studentName(a).localeCompare(studentName(b)))
       .slice(0, MAX_RESULTS);
   }, [students.data, q, exclude]);
 
@@ -111,7 +110,6 @@ export function StudentSearch({
               onMouseEnter={() => setActive(i)}
             >
               <span className="picker-name">{studentName(s)}</span>
-              {s.status !== 'active' && <span className="badge badge-inactive">Inactive</span>}
               <span className="picker-meta">{s.email || s.phone}</span>
             </li>
           ))}
