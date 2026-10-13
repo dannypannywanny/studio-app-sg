@@ -1,5 +1,6 @@
 // Package sales: invoice + lot + grant, then settle the oldest owed lessons onto the new lot.
 // Credit writes go through CreditTx (creditTx.ts); attendance lives in attendance.ts.
+import { wallClockToUtc } from '@lessonkaki/shared';
 import { Timestamp, type Firestore } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
 import { NO_EXPIRY } from '@lessonkaki/shared';
@@ -18,6 +19,32 @@ export interface SellPackageInput {
   packageId: string;
   /** One per user action (the client makes it when the sell dialog opens). Retries return the first result. */
   idempotencyKey: string;
+  /** Expiry as a wall date in the school's zone (inclusive), null = never; omitted = the package's validity. */
+  validUntil?: string | null;
+  /** Off the package price: a percentage (0-100) or an amount in cents. */
+  discount?: { kind: 'percent' | 'amount'; value: number } | null;
+  /** Staff note, kept on the invoice and the package. */
+  note?: string | null;
+}
+
+/** "Voice lessons with Daniel · 12 lessons": the package's subject and its teachers' first names. */
+export async function packageLabel(
+  tx: FirebaseFirestore.Transaction,
+  school: FirebaseFirestore.DocumentReference,
+  pkg: FirebaseFirestore.DocumentData,
+): Promise<string> {
+  const n = pkg.sessions as number;
+  const count = `${n} ${n === 1 ? 'lesson' : 'lessons'}`;
+  if (typeof pkg.subjectId !== 'string') return `${pkg.name as string}`;
+  const subject = await tx.get(school.collection('subjects').doc(pkg.subjectId));
+  if (!subject.exists) return `${pkg.name as string}`;
+  const ids = (subject.get('teacherIds') as string[] | undefined) ?? [];
+  const teachers = ids.length ? await tx.getAll(...ids.map((id) => school.collection('teachers').doc(id))) : [];
+  const names = teachers
+    .filter((t) => t.exists && t.get('active') !== false)
+    .map((t) => String(t.get('displayName') ?? '').trim().split(/\s+/)[0])
+    .filter(Boolean);
+  return `${subject.get('name') as string}${names.length ? ` with ${names.join(' / ')}` : ''} · ${count}`;
 }
 
 export interface SellPackageResult {
@@ -73,14 +100,29 @@ export async function sellPackage(
       throw new HttpsError('failed-precondition', 'Package has no session count');
     }
 
+    const label = await packageLabel(tx, school, pkg);
     const ct = new CreditTx(tx, school, actor, at);
     const owed = await readOwed(ct, input.schoolId, input.studentId);
 
     // ---- writes ----
     const nowTs = Timestamp.fromDate(at);
     const validityDays = pkg.validityDays as number | null | undefined;
-    const validUntil = Timestamp.fromDate(validityDays ? new Date(at.getTime() + validityDays * DAY_MS) : NO_EXPIRY);
-    const priceCents = pkg.priceCents as number;
+    const timeZone = (schoolSnap.get('timezone') as string | undefined) ?? 'Asia/Singapore';
+    const validUntil =
+      input.validUntil === undefined
+        ? Timestamp.fromDate(validityDays ? new Date(at.getTime() + validityDays * DAY_MS) : NO_EXPIRY)
+        : input.validUntil === null
+          ? Timestamp.fromDate(NO_EXPIRY)
+          : // Through the end of that day in the school's zone.
+            Timestamp.fromDate(new Date(wallClockToUtc(input.validUntil, '00:00', timeZone).getTime() + DAY_MS - 1));
+    if (validUntil.toMillis() < at.getTime()) throw new HttpsError('invalid-argument', 'The expiry date is in the past');
+    const subtotalCents = pkg.priceCents as number;
+    const d = input.discount;
+    const discountCents = !d
+      ? 0
+      : Math.min(subtotalCents, Math.max(0, d.kind === 'percent' ? Math.round((subtotalCents * Math.min(d.value, 100)) / 100) : Math.round(d.value)));
+    const priceCents = subtotalCents - discountCents;
+    const note = input.note?.trim().slice(0, 1000) || null;
     const currency = (schoolSnap.get('currency') as string | undefined) ?? 'SGD';
 
     const n = counterSnap.exists ? (counterSnap.get('next') as number) : 1;
@@ -96,15 +138,16 @@ export async function sellPackage(
       currency,
       lines: [
         {
-          desc: pkg.name as string,
+          desc: label,
           qty: 1,
-          unitCents: priceCents,
+          unitCents: subtotalCents,
           packageId: input.packageId,
           enrolmentId: lotRef.id,
         },
       ],
-      subtotalCents: priceCents,
-      discountCents: 0,
+      subtotalCents,
+      discountCents,
+      note,
       moneyCreditAppliedCents: 0,
       totalCents: priceCents,
       paidCents: 0,
@@ -123,7 +166,8 @@ export async function sellPackage(
       {
         studentId: input.studentId,
         packageId: input.packageId,
-        packageName: pkg.name as string,
+        packageName: label,
+        note,
         invoiceId: invoiceRef.id,
         validFrom: nowTs,
         validUntil,

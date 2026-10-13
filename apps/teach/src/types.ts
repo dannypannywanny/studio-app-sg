@@ -47,6 +47,7 @@ export interface Package {
   sessions: number;
   priceCents: number;
   validityDays: number | null;
+  subjectId?: string | null;
   active: boolean;
 }
 
@@ -58,6 +59,8 @@ export interface Student {
   phone?: string;
   status: StudentStatus;
   legacyId?: string | null;
+  /** Staff notes about the student (shown on their page and in the lesson sheet). */
+  notes?: string;
   /** Date the student joined the school (yyyy-MM-dd); for imports, their original sign-up date. */
   createdOn?: string | null;
   summary?: Partial<StudentSummary> & { outstandingCents?: number; moneyCreditCents?: number };
@@ -100,6 +103,7 @@ export interface Invoice {
   issueDate: Ts;
   dueDate: Ts;
   lines: { desc: string; qty: number; unitCents: number }[];
+  note?: string | null;
   overdueSince?: Ts | null;
   voidReason?: string | null;
   paidAt?: Ts | null;

@@ -293,6 +293,7 @@ export function InvoiceDetail() {
             {formatDate(inv.issueDate.toDate(), tz)} · due {formatDate(inv.dueDate.toDate(), tz)}
             {inv.status === 'void' && inv.voidReason ? ` · void: ${inv.voidReason}` : ''}
           </p>
+          {inv.note && <p className="staff-note">Note: {inv.note}</p>}
         </div>
         <div className="row">
           <PdfButton invoiceId={inv.id} number={inv.number} />

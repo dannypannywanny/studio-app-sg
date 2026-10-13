@@ -452,6 +452,7 @@ export function LessonPanel({
                     {s?.summary?.sessionsAvailable ?? 0} credits left
                   </span>
                 </div>
+                {s?.notes && <p className="staff-note att-notes">{s.notes}</p>}
                 {!cancelled && !a.ledgerEntryId && (a.status === 'booked' || a.status === 'present' || a.status === 'absent') && (
                   <PackageSelect
                     studentId={a.studentId}

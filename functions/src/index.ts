@@ -195,6 +195,9 @@ const SellPackage = z.object({
   studentId: id,
   packageId: id,
   idempotencyKey: z.string().min(8).max(100).regex(/^[A-Za-z0-9_-]+$/),
+  validUntil: z.string().refine(isWallDate).nullable().optional(),
+  discount: z.object({ kind: z.enum(['percent', 'amount']), value: z.number().min(0).max(100_000_000) }).nullable().optional(),
+  note: z.string().max(1000).nullable().optional(),
 });
 
 export const sellPackage = onCall(async (req) => {

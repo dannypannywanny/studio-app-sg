@@ -505,3 +505,9 @@ body.sheet-open { overflow: hidden; }
 .cal-closed { cursor: default; left: 0; right: 0; border-radius: 0; opacity: 0.85; }
 .mcal-holiday { padding: 1px 6px; border-radius: 6px; font-size: 0.7rem; font-weight: 600; color: var(--warn-fg); background: var(--warn-bg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mcal-holiday.closed { color: var(--ink-2); background: repeating-linear-gradient(-45deg, var(--muted-bg) 0 6px, color-mix(in oklab, var(--muted-bg) 55%, transparent) 6px 12px); }
+.discount-row { flex-wrap: nowrap; }
+.discount-row select { width: 110px; }
+.discount-row input { width: 120px; }
+.sale-total { font-size: 1rem; }
+.staff-note { margin-top: 8px; padding: 8px 12px; border-radius: 10px; background: var(--tan-soft); color: var(--ink); font-size: var(--text-sm); white-space: pre-wrap; max-width: 60ch; }
+.att-notes { margin-top: 0; }
