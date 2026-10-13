@@ -197,6 +197,16 @@ describe('student scoping', () => {
     await assertFails(getDoc(doc(anon(), `schools/${A}/availability/t1`)));
   });
 
+  it('reads only their own checkouts, and cannot write them', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), `schools/${A}/checkouts/c1`), { studentId: 'stu1', status: 'pending' });
+      await setDoc(doc(ctx.firestore(), `schools/${A}/checkouts/c2`), { studentId: 'stu2', status: 'pending' });
+    });
+    await assertSucceeds(getDoc(doc(student(), `schools/${A}/checkouts/c1`)));
+    await assertFails(getDoc(doc(student(), `schools/${A}/checkouts/c2`)));
+    await assertFails(updateDoc(doc(student(), `schools/${A}/checkouts/c1`), { status: 'paid' }));
+  });
+
   it('members can read their own membership only', async () => {
     await assertSucceeds(getDoc(doc(owner(), `schools/${A}/members/owner-${A}`)));
     await assertFails(getDoc(doc(student(), `schools/${A}/members/owner-${A}`)));

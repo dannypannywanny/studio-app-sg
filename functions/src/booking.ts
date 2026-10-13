@@ -50,6 +50,20 @@ const maxUpcoming = (school: DocumentSnapshot): number | null => {
   return typeof n === 'number' && Number.isInteger(n) && n >= 1 ? n : null;
 };
 
+/**
+ * Who must have a session before booking online (schools/{s}.booking.creditRequired):
+ * 'none' (default) books on credit like staff do; 'newStudents' asks anyone not migrated from the old
+ * system (no legacyId) to buy first; 'all' asks everyone.
+ */
+export type CreditRule = 'none' | 'newStudents' | 'all';
+export function creditRule(school: DocumentSnapshot): CreditRule {
+  const r = school.get('booking.creditRequired');
+  return r === 'newStudents' || r === 'all' ? r : 'none';
+}
+export function mustHaveCredit(rule: CreditRule, student: DocumentSnapshot): boolean {
+  return rule === 'all' || (rule === 'newStudents' && !student.get('legacyId'));
+}
+
 /** The teacher's lessons overlapping [fromMs, toMs) that still have a student on them. */
 export async function teacherBusy(
   read: Reader,
@@ -134,6 +148,8 @@ export interface GetAvailabilityInput {
 export interface BookableTeacher {
   teacherId: string;
   name: string;
+  /** What booked lessons are for (packages for this subject are the ones to buy). */
+  subjectId: string | null;
   lessonMin: number;
   inPerson: boolean;
   online: boolean;
@@ -146,6 +162,11 @@ export interface AvailabilityResult {
   slots: { teacherId: string; startAt: string; inPerson: boolean; online: boolean }[];
   /** Upcoming lessons the student booked here, and how many they may hold (max null = no limit). Null for staff. */
   upcoming: { booked: number; max: number | null } | null;
+  /**
+   * The student's sessions: unused ones, how many upcoming lessons will use them, and whether they
+   * must buy a package before booking (no free session and the school requires one). Null for staff.
+   */
+  credit: { sessionsAvailable: number; upcomingLessons: number; mustBuy: boolean } | null;
 }
 
 export async function getAvailability(
@@ -172,7 +193,7 @@ export async function getAvailability(
     if (!teacher.exists || teacher.get('active') === false || !av.bookable || !av.weekly.length) return [];
     return [{ teacherId: d.id, teacher, av }];
   });
-  if (!bookable.length) return { timeZone, teachers: [], slots: [], upcoming: null };
+  if (!bookable.length) return { timeZone, teachers: [], slots: [], upcoming: null, credit: null };
 
   // One window wide enough for every teacher.
   const windows = bookable.map((b) => bookingWindow(b.av, at));
@@ -197,6 +218,7 @@ export async function getAvailability(
     teachers: bookable.map((b) => ({
       teacherId: b.teacherId,
       name: (b.teacher.get('publicName') as string | undefined) || (b.teacher.get('displayName') as string) || 'Teacher',
+      subjectId: b.av.subjectId ?? ((b.teacher.get('subjectIds') as string[] | undefined) ?? [])[0] ?? null,
       lessonMin: b.av.lessonMin,
       inPerson: b.av.weekly.some((w) => w.inPerson),
       online: b.av.weekly.some((w) => w.online),
@@ -205,7 +227,15 @@ export async function getAvailability(
     upcoming: studentId
       ? { booked: own.filter((l) => l.active && l.source === 'portal' && l.startMs > at.getTime()).length, max: maxUpcoming(schoolSnap) }
       : null,
+    credit: studentId ? await creditFor(school, schoolSnap, studentId, own, at) : null,
   };
+}
+
+async function creditFor(school: DocumentReference, schoolSnap: DocumentSnapshot, studentId: string, own: OwnLesson[], at: Date) {
+  const student = await school.collection('students').doc(studentId).get();
+  const sessionsAvailable = (student.get('summary.sessionsAvailable') as number | undefined) ?? 0;
+  const upcomingLessons = own.filter((l) => l.active && l.startMs > at.getTime()).length;
+  return { sessionsAvailable, upcomingLessons, mustBuy: mustHaveCredit(creditRule(schoolSnap), student) && sessionsAvailable - upcomingLessons < 1 };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -260,6 +290,11 @@ export async function bookLesson(db: Firestore, input: BookLessonInput, actor: A
     if (same) return { lessonId: same.lessonId, existing: true };
     if (own.some((l) => l.active && l.startMs < end && l.endMs > start)) {
       throw new HttpsError('failed-precondition', 'You already have a lesson at that time');
+    }
+    const studentSnap = await tx.get(school.collection('students').doc(studentId));
+    if (mustHaveCredit(creditRule(schoolSnap), studentSnap)) {
+      const free = ((studentSnap.get('summary.sessionsAvailable') as number | undefined) ?? 0) - own.filter((l) => l.active && l.startMs > at.getTime()).length;
+      if (free < 1) throw new HttpsError('failed-precondition', 'Buy a package first: your sessions are all used or booked.', { needsPackage: true });
     }
     const booked = own.filter((l) => l.active && l.source === 'portal' && l.startMs > at.getTime()).length;
     const max = maxUpcoming(schoolSnap);

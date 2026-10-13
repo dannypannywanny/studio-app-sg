@@ -64,7 +64,7 @@ describe('getAvailability', () => {
   it('lists open slots for bookable teachers', async () => {
     const t = await setup();
     const res = await getAvailability(db, { schoolId: t.schoolId }, student(t), NOW);
-    expect(res.teachers).toEqual([{ teacherId: t.teacherId, name: 'Teacher One', lessonMin: 45, inPerson: true, online: true }]);
+    expect(res.teachers).toEqual([{ teacherId: t.teacherId, name: 'Teacher One', subjectId: t.subjectId, lessonMin: 45, inPerson: true, online: true }]);
     expect(res.upcoming).toEqual({ booked: 0, max: null }); // no cap unless the school sets one
     expect(await slotTimes(t)).toEqual(['10:00', '10:30', '11:00']);
     const tuesday = res.slots.find((s) => Date.parse(s.startAt) >= sg(TUE, '00:00').getTime());

@@ -1,8 +1,9 @@
-import { ArrowRight, CalendarBlank, CheckCircle, MapPin, VideoCamera } from '@phosphor-icons/react';
+import { ArrowLeft, ArrowRight, CalendarBlank, CheckCircle, MapPin, VideoCamera } from '@phosphor-icons/react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { wallDateOf, type LessonMode } from '@lessonkaki/shared';
 import { MonthCalendar } from '../components/MonthCalendar';
+import { PackageStep } from '../components/PackageStep';
 import { call, errorMessage } from '../firebase';
 import { dayLabel, longDayLabel, otherZone, timeRange, zoneName } from '../format';
 import { useProfile, useStudent } from '../hooks';
@@ -50,6 +51,7 @@ export function Book() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [booked, setBooked] = useState<Booked | null>(null);
+  const [step, setStep] = useState<'package' | 'time'>('package');
 
   const load = useCallback(async () => {
     setLoadError(null);
@@ -97,6 +99,7 @@ export function Book() {
     } catch (err) {
       setError(errorMessage(err));
       setSlot(null);
+      if (/Buy a package/.test(errorMessage(err))) setStep('package');
       void load(); // the time may have just gone; show what's open now
     } finally {
       setBusy(false);
@@ -179,7 +182,7 @@ export function Book() {
   }
 
   const full = data.upcoming?.max != null && data.upcoming.booked >= data.upcoming.max;
-  const sessionsLeft = student.data?.summary?.sessionsAvailable ?? 0;
+  const freeSessions = data.credit ? data.credit.sessionsAvailable - data.credit.upcomingLessons : (student.data?.summary?.sessionsAvailable ?? 0);
   const abroad = otherZone(tz);
   const contact = profile.data?.contactEmail;
 
@@ -211,8 +214,8 @@ export function Book() {
         </article>
       ) : (
         <>
-          <div className="choices">
-            {data.teachers.length > 1 && (
+          {data.teachers.length > 1 && (
+            <div className="choices">
               <Segmented
                 label="Teacher"
                 options={data.teachers.map((t) => ({ value: t.teacherId, label: t.name }))}
@@ -220,9 +223,31 @@ export function Book() {
                 onChange={(v) => {
                   setTeacherId(v);
                   setSlot(null);
+                  setStep('package');
                 }}
               />
-            )}
+            </div>
+          )}
+          {step === 'package' && data.credit ? (
+            <PackageStep
+              schoolId={schoolId}
+              teacher={teacher}
+              credit={data.credit}
+              profile={profile.data}
+              onContinue={() => {
+                setStep('time');
+                void load();
+              }}
+            />
+          ) : (
+          <>
+          {data.credit && (
+            <button type="button" className="back" onClick={() => setStep('package')}>
+              <ArrowLeft size={18} weight="bold" aria-hidden="true" />
+              Package
+            </button>
+          )}
+          <div className="choices">
             {modes.length > 1 && activeMode && (
               <Segmented
                 label="Where"
@@ -287,6 +312,8 @@ export function Book() {
               </section>
             </>
           )}
+          </>
+          )}
         </>
       )}
 
@@ -299,7 +326,7 @@ export function Book() {
               </p>
               <p className="cb-meta">
                 {MODE_LABEL[activeMode]} with {teacher.name}
-                {sessionsLeft > 0 ? '. Uses 1 session once the lesson is marked.' : '. No sessions left? Book anyway, the studio will invoice you.'}
+                {freeSessions > 0 ? '. Uses 1 session once the lesson is marked.' : '. No sessions left: the studio will invoice you.'}
               </p>
             </div>
             <button className="btn" onClick={confirm} disabled={busy}>

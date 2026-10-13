@@ -27,7 +27,8 @@ export interface RecordPaymentInput {
   schoolId: string;
   invoiceId: string;
   amountCents: number;
-  method: PaymentMethod;
+  /** Staff choose from PAYMENT_METHODS; 'card_hitpay' comes only from the HitPay webhook. */
+  method: PaymentMethod | 'card_hitpay';
   /** When the money arrived (defaults to now). */
   paidAt?: Date;
   /** Bank / PayNow reference, receipt number. */

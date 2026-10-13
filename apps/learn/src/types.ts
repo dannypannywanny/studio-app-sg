@@ -14,6 +14,8 @@ export interface Profile {
   whatsapp?: string | null;
   /** Shown above the sign-in form, e.g. a note about moving from the old booking system. */
   signInNotice?: string | null;
+  /** The school's privacy notice, linked from sign-up. */
+  privacyUrl?: string | null;
   teachers?: Record<string, { name: string }>;
 }
 
@@ -76,9 +78,10 @@ export interface Invoice {
 /** getAvailability's answer (functions/src/booking.ts). */
 export interface AvailabilityResult {
   timeZone: string;
-  teachers: { teacherId: string; name: string; lessonMin: number; inPerson: boolean; online: boolean }[];
+  teachers: { teacherId: string; name: string; subjectId: string | null; lessonMin: number; inPerson: boolean; online: boolean }[];
   slots: { teacherId: string; startAt: string; inPerson: boolean; online: boolean }[];
   upcoming: { booked: number; max: number | null } | null;
+  credit: { sessionsAvailable: number; upcomingLessons: number; mustBuy: boolean } | null;
 }
 
 export interface BookLessonInput {

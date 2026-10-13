@@ -18,10 +18,12 @@ interface LearnProfile {
   schoolId: string;
   /** Hostnames the learn site is served from (no scheme), e.g. the web.app host and the custom domain. */
   hosts: string[];
-  profile: { name: string; logoUrl: string | null; siteUrl: string | null; contactEmail: string | null; whatsapp: string | null; signInNotice?: string | null };
+  profile: { name: string; logoUrl: string | null; siteUrl: string | null; contactEmail: string | null; whatsapp: string | null; signInNotice?: string | null; privacyUrl?: string | null };
   availability?: Record<string, Availability>;
   /** School-wide booking rules: online cancel cutoff (policy.lateCancelHours) and the per-student cap (null = none). */
-  school?: { lateCancelHours?: number; maxUpcoming?: number | null };
+  school?: { lateCancelHours?: number; maxUpcoming?: number | null; creditRequired?: 'none' | 'newStudents' | 'all' };
+  /** Package ids sold online (the learn site's buy step); every other package is set not to sell online. */
+  packagesOnline?: string[];
 }
 
 async function main() {
@@ -58,6 +60,10 @@ async function main() {
       if (maxUpcoming !== null && (!Number.isInteger(maxUpcoming) || maxUpcoming < 1)) throw new Error('maxUpcoming must be null or a whole number');
       patch['booking.maxUpcoming'] = maxUpcoming;
     }
+    if (cfg.school.creditRequired !== undefined) {
+      if (!['none', 'newStudents', 'all'].includes(cfg.school.creditRequired)) throw new Error('creditRequired must be none, newStudents or all');
+      patch['booking.creditRequired'] = cfg.school.creditRequired;
+    }
     batch.update(school, patch);
     console.log(`School settings: ${JSON.stringify(cfg.school)}`);
   }
@@ -70,6 +76,12 @@ async function main() {
     batch.set(school.collection('availability').doc(teacherId), { ...hours, updatedAt: ts }, { merge: true });
     const next = openSlots(resolved, { timeZone, now: new Date(), busy: [] }).slice(0, 3);
     console.log(`${teacherId}: ${resolved.weekly.length} weekly blocks; first open times (before lessons): ${next.map((s) => s.startAt.toISOString()).join(', ')}`);
+  }
+  if (cfg.packagesOnline) {
+    const pkgs = await school.collection('packages').get();
+    for (const id of cfg.packagesOnline) if (!pkgs.docs.some((d) => d.id === id)) throw new Error(`Package ${id} not found`);
+    for (const d of pkgs.docs) batch.update(d.ref, { sellsOnline: cfg.packagesOnline.includes(d.id), updatedAt: ts });
+    console.log(`Sold online: ${cfg.packagesOnline.join(', ')}`);
   }
   await batch.commit();
   console.log(`Learn site set up for "${cfg.schoolId}" in ${target.projectId}: hosts ${cfg.hosts.join(', ')}; ${teachers.size} teachers in the profile.`);

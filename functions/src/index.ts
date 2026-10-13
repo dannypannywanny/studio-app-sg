@@ -5,7 +5,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 import { setGlobalOptions } from 'firebase-functions/v2';
-import { HttpsError, onCall } from 'firebase-functions/v2/https';
+import { HttpsError, onCall, onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { onDocumentCreated, onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { defineSecret } from 'firebase-functions/params';
@@ -15,6 +15,7 @@ import * as alerts from './alerts';
 import { requireRole } from './auth';
 import * as attendance from './attendance';
 import * as booking from './booking';
+import * as checkout from './checkout';
 import * as credits from './credits';
 import * as lessons from './lessons';
 import * as invoicePdf from './invoicePdf';
@@ -25,6 +26,7 @@ import * as members from './members';
 import * as money from './money';
 import * as series from './series';
 import * as signInLinks from './signInLinks';
+import * as signup from './signup';
 
 initializeApp();
 setGlobalOptions({ region: 'asia-southeast1', maxInstances: 10 });
@@ -393,5 +395,53 @@ export const sendSignInLink = onCall({ secrets: [RESEND_API_KEY] }, async (req) 
     { email: input.email, host: new URL(origin).hostname },
     { defaultFrom: DEFAULT_ALERT_FROM },
   );
+  return { ok: true };
+});
+
+// Online package purchase with HitPay (card / PayNow) before booking. Keys: the HITPAY_KEYS secret,
+// JSON keyed by schoolId ({ "sywh": { "apiKey": "...", "salt": "...", "mode": "live" } }).
+const HITPAY_KEYS = defineSecret('HITPAY_KEYS');
+
+const StartCheckout = z.object({ schoolId: id, packageId: id });
+
+export const startCheckout = onCall({ secrets: [HITPAY_KEYS] }, async (req) => {
+  const input = parse(StartCheckout, req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['student']);
+  const origin = req.rawRequest.headers.origin;
+  if (!origin) throw new HttpsError('invalid-argument', 'Open the booking page in a browser');
+  const keys = checkout.parseKeyRing(HITPAY_KEYS.value())[input.schoolId];
+  return checkout.startCheckout(db(), keys ? checkout.hitpayClient(keys) : null, { ...input, host: new URL(origin).hostname }, actor);
+});
+
+/** HitPay calls this (registered in the HitPay dashboard for payment_request.completed). */
+export const hitpayWebhook = onRequest({ secrets: [HITPAY_KEYS] }, async (req, res) => {
+  if (req.method !== 'POST') {
+    res.status(405).send('POST only');
+    return;
+  }
+  try {
+    const outcome = await checkout.handleHitPayWebhook(db(), checkout.parseKeyRing(HITPAY_KEYS.value()), req.rawBody, req.get('Hitpay-Signature'));
+    console.log(`hitpayWebhook: ${outcome}`);
+    res.status(outcome === 'badSignature' ? 401 : 200).send(outcome);
+  } catch (err) {
+    console.error('hitpayWebhook failed', err);
+    res.status(500).send('error'); // HitPay retries
+  }
+});
+
+const SignUp = z.object({
+  firstName: z.string().trim().min(1).max(80),
+  lastName: z.string().trim().max(80),
+  email: z.email().max(200),
+  phone: z.string().trim().min(6).max(30),
+  consent: z.literal(true),
+});
+
+export const signUpStudent = onCall({ secrets: [RESEND_API_KEY] }, async (req) => {
+  const input = parse(SignUp, req.data);
+  const origin = req.rawRequest.headers.origin;
+  if (!origin) throw new HttpsError('invalid-argument', 'Open the sign-up page in a browser');
+  const key = RESEND_API_KEY.value();
+  await signup.signUpStudent(db(), getAuth(), key ? alerts.resendSender(key) : null, { ...input, host: new URL(origin).hostname }, { defaultFrom: DEFAULT_ALERT_FROM });
   return { ok: true };
 });

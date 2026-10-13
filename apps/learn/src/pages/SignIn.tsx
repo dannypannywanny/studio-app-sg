@@ -3,7 +3,8 @@ import { sendSignInLinkToEmail } from 'firebase/auth';
 import { useState, type FormEvent } from 'react';
 import { Navigate } from 'react-router';
 import { AuthShell } from '../components/AuthShell';
-import { AUTH_EMULATOR_URL, PROJECT_ID, auth, call, useEmulators } from '../firebase';
+import { AUTH_EMULATOR_URL, PROJECT_ID, auth, call, errorMessage, useEmulators } from '../firebase';
+import { useProfile, useSiteSchoolId } from '../hooks';
 import { useSession } from '../session';
 
 export const EMAIL_KEY = 'lk.learn.emailForSignIn';
@@ -11,6 +12,7 @@ export const EMAIL_KEY = 'lk.learn.emailForSignIn';
 // Production: LessonKaki emails the link from the school's own domain (Firebase's sender lands in spam).
 // The emulator can't send email, so dev keeps Firebase's flow and its "open the link" button.
 const sendSignInLink = call<{ email: string }, { ok: true }>('sendSignInLink');
+const signUpStudent = call<{ firstName: string; lastName: string; email: string; phone: string; consent: true }, { ok: true }>('signUpStudent');
 
 /** Dev only: the auth emulator doesn't send email, it lists the links it would have sent. */
 async function latestEmulatorLink(email: string): Promise<string | null> {
@@ -34,8 +36,31 @@ export function SignIn() {
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<'signIn' | 'signUp'>(() => (new URLSearchParams(window.location.search).has('signup') ? 'signUp' : 'signIn'));
+  const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', consent: false });
+  const site = useSiteSchoolId();
+  const profile = useProfile(site.schoolId);
 
   if (ready && user) return <Navigate to="/" replace />;
+
+  async function signUp(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const clean = email.trim().toLowerCase();
+      await signUpStudent({ firstName: form.firstName, lastName: form.lastName, email: clean, phone: form.phone, consent: true });
+      // The emulator can't send email: ask Firebase for a link the dev button can open.
+      if (useEmulators) await sendSignInLinkToEmail(auth, clean, { url: `${window.location.origin}/finish-signin`, handleCodeInApp: true });
+      remember(clean);
+      setEmail(clean);
+      setSent(true);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -93,6 +118,60 @@ export function SignIn() {
     );
   }
 
+  if (mode === 'signUp') {
+    const privacy = profile.data?.privacyUrl;
+    return (
+      <AuthShell>
+        <h1>Create your account</h1>
+        <p className="lede">Then buy a package and book your lessons online.</p>
+        <form onSubmit={signUp} className="form">
+          <div className="field-row">
+            <label className="field">
+              <span className="field-label">First name</span>
+              <input required autoComplete="given-name" value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} />
+            </label>
+            <label className="field">
+              <span className="field-label">Last name</span>
+              <input autoComplete="family-name" value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} />
+            </label>
+          </div>
+          <label className="field">
+            <span className="field-label">Email</span>
+            <input type="email" required autoComplete="email" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          </label>
+          <label className="field">
+            <span className="field-label">Mobile</span>
+            <input type="tel" required autoComplete="tel" inputMode="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+            <span className="field-help">So the studio can reach you about your lessons.</span>
+          </label>
+          <label className="check">
+            <input type="checkbox" required checked={form.consent} onChange={(e) => setForm({ ...form, consent: e.target.checked })} />
+            <span>
+              I agree to the {privacy ? <a href={privacy} target="_blank" rel="noreferrer">privacy notice</a> : 'privacy notice'}: the studio keeps my
+              details to run my lessons and payments.
+            </span>
+          </label>
+          <button className="btn btn-block" disabled={busy}>
+            {busy ? 'Creating' : 'Create account'}
+            {!busy && <ArrowRight size={18} weight="bold" aria-hidden="true" />}
+          </button>
+          {error && <p className="form-error" role="alert">{error}</p>}
+        </form>
+        {profile.data?.whatsapp && (
+          <p className="meta">
+            Want a trial lesson first? <a href={profile.data.whatsapp} target="_blank" rel="noreferrer">WhatsApp the studio</a>.
+          </p>
+        )}
+        <p className="auth-switch">
+          Already have an account?{' '}
+          <button type="button" className="link-btn" onClick={() => { setMode('signIn'); setError(null); }}>
+            Sign in
+          </button>
+        </p>
+      </AuthShell>
+    );
+  }
+
   return (
     <AuthShell showNotice>
       <h1>Your lessons, in one place</h1>
@@ -116,6 +195,12 @@ export function SignIn() {
         </button>
         {error && <p className="form-error" role="alert">{error}</p>}
       </form>
+      <p className="auth-switch">
+        New here?{' '}
+        <button type="button" className="link-btn" onClick={() => { setMode('signUp'); setError(null); }}>
+          Create an account
+        </button>
+      </p>
     </AuthShell>
   );
 }

@@ -114,6 +114,11 @@ service cloud.firestore {
       }
 
       match /bookings/{id} { allow read: if isStaff(s); allow write: if false; }
+      // Online package purchases (HitPay): the buyer watches their own checkout turn 'paid'.
+      match /checkouts/{id} {
+        allow read: if isStaff(s) || resource.data.studentId == myStudent(s);
+        allow write: if false;
+      }
       match /slotLocks/{id} { allow read, write: if false; }
       match /counters/{id} { allow read, write: if false; }
       match /auditLog/{id} { allow read: if isStaff(s); allow write: if false; }

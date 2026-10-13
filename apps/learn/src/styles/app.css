@@ -89,6 +89,12 @@ button { font: inherit; color: inherit; }
 .auth-card > * + * { margin-top: 14px; }
 .auth-card .btn-quiet { margin-top: 18px; }
 .auth-notice { width: min(100%, 440px); background: var(--tan-soft); color: var(--ink); border-radius: var(--r-card); padding: 14px 18px; font-size: 0.95rem; line-height: 1.5; }
+.auth-switch { text-align: center; font-size: 0.95rem; color: var(--ink-2); }
+.auth-switch button { font-weight: 600; color: var(--ink); }
+.check { display: flex; gap: 10px; align-items: flex-start; font-size: 0.92rem; color: var(--ink-2); }
+.check input { margin-top: 3px; width: 18px; height: 18px; accent-color: var(--ink); }
+.field-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.field input { width: 100%; min-width: 0; }
 .auth-foot { color: var(--ink-2); font-size: 0.9rem; text-align: center; }
 .sent-mark { width: 56px; height: 56px; border-radius: var(--r-pill); display: grid; place-items: center; background: var(--tan-soft); color: var(--ink); }
 .skeleton-line { height: 14px; width: 60%; border-radius: var(--r-label); background: var(--surface); margin-top: 20px; }
@@ -276,6 +282,17 @@ button { font: inherit; color: inherit; }
 .done-mark { color: var(--tan-deep); }
 .done-when { font-family: var(--font-display); font-weight: 600; font-size: 1.4rem; letter-spacing: -0.02em; line-height: 1.25; font-variant-numeric: tabular-nums; }
 .done-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+
+/* ---------- Packages (booking step) ---------- */
+.pkg-current { background: var(--contrast-bg); color: var(--contrast-fg); border-radius: var(--r-card); padding: 22px; display: grid; gap: 10px; justify-items: start; }
+.pkg-current .meta { color: var(--contrast-fg-2); }
+.pkg-current ul { margin: 0; padding-left: 1.1em; }
+.pkg-current-n { font-family: var(--font-display); font-weight: 600; font-size: 1.5rem; letter-spacing: -0.02em; }
+.pkg-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.pkg-list li { display: flex; align-items: center; justify-content: space-between; gap: 14px; background: var(--surface); border-radius: var(--r-card); padding: 16px 18px; }
+.pkg-info { display: grid; gap: 2px; min-width: 0; }
+.pkg-title { font-weight: 600; }
+.paid-note { background: var(--surface); border-radius: var(--r-card); padding: 24px; display: grid; gap: 10px; justify-items: start; }
 
 /* ---------- Payments ---------- */
 .invoices li + li { border-top: 1px solid var(--line); }

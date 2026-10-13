@@ -10,12 +10,14 @@
     "logoUrl": "/schools/sywh/logo.webp",
     "siteUrl": "https://singyourwayhome.sg",
     "contactEmail": "hello@singyourwayhome.sg",
-    "whatsapp": null,
-    "signInNotice": "We've moved to a new booking system. First time here? Enter the email you used with us before and we'll send you a link to sign in. There's no password to set."
+    "whatsapp": "https://wa.me/6584286198",
+    "signInNotice": "We've moved to a new booking system. First time here? Enter the email you used with us before and we'll send you a link to sign in. There's no password to set.",
+    "privacyUrl": "https://singyourwayhome.sg/privacy/"
   },
   "school": {
     "lateCancelHours": 0,
-    "maxUpcoming": null
+    "maxUpcoming": null,
+    "creditRequired": "newStudents"
   },
   "availability": {
     "owner-teacher": {
@@ -85,5 +87,10 @@
         }
       ]
     }
-  }
+  },
+  "packagesOnline": [
+    "voice-single",
+    "voice-4",
+    "voice-12"
+  ]
 }
