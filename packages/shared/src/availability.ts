@@ -168,6 +168,8 @@ export interface SlotQuery {
   /** Optional narrower window (still clipped to notice and horizon). */
   from?: Date;
   to?: Date;
+  /** Wall dates with no slots at all (public holidays the school is closed on). */
+  closedDates?: ReadonlySet<string>;
 }
 
 const MIN_MS = 60_000;
@@ -215,6 +217,7 @@ export function openSlots(av: ResolvedAvailability, q: SlotQuery): Slot[] {
   const byStart = new Map<number, Slot>();
   const lastDate = wallDateOf(new Date(toMs), q.timeZone);
   for (let date = wallDateOf(new Date(fromMs), q.timeZone); date <= lastDate; date = addDays(date, 1)) {
+    if (q.closedDates?.has(date)) continue;
     for (const block of hoursOn(av, date)) {
       const endMin = toMinutes(block.end);
       for (let m = toMinutes(block.start); m + av.lessonMin <= endMin; m += av.stepMin) {

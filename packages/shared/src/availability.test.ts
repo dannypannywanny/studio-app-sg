@@ -138,3 +138,16 @@ describe('time off', () => {
     expect(starts('2030-01-07')).toEqual(['10:00', '13:00'].map((t) => wallClockToUtc('2030-01-07', t, tz).toISOString())));
   it('an all-day block closes the day', () => expect(starts('2030-01-14')).toEqual([]));
 });
+
+describe('closed dates (public holidays)', () => {
+  it('offers nothing on a closed date', () => {
+    const tz = 'Asia/Singapore';
+    const av = resolveAvailability({
+      weekly: [{ day: 'MO', start: '10:00', end: '12:00', inPerson: true, online: true }],
+      lessonMin: 60, stepMin: 60, bufferMin: 0, minNoticeHours: 0, horizonDays: 30,
+    });
+    const q = { timeZone: tz, now: wallClockToUtc('2026-08-09', '09:00', tz), busy: [], from: wallClockToUtc('2026-08-10', '00:00', tz), to: wallClockToUtc('2026-08-10', '23:00', tz) };
+    expect(openSlots(av, q)).toHaveLength(2);
+    expect(openSlots(av, { ...q, closedDates: new Set(['2026-08-10']) })).toHaveLength(0);
+  });
+});

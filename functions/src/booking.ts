@@ -10,6 +10,9 @@ import { FieldValue, Timestamp, type DocumentReference, type DocumentSnapshot, t
 import { HttpsError } from 'firebase-functions/v2/https';
 import {
   bookingWindow,
+  closedHolidayDates,
+  resolveHolidaySettings,
+  wallDateOf,
   openSlots,
   resolveAvailability,
   slotLockId,
@@ -222,6 +225,7 @@ export async function getAvailability(
   const schoolSnap = await school.get();
   if (!schoolSnap.exists) notFound('School');
   const timeZone = (schoolSnap.get('timezone') as string | undefined) ?? 'Asia/Singapore';
+  const closedDates = closedHolidayDates(resolveHolidaySettings(schoolSnap.get('holidays')));
 
   const availDocs = input.teacherId
     ? [await school.collection('availability').doc(input.teacherId).get()].filter((d) => d.exists)
@@ -255,7 +259,7 @@ export async function getAvailability(
     const { joinable, busy } = splitHeld(held, b.subjectId, capacity, b.av.lessonMin * 60_000);
     const bufferMs = b.av.bufferMin * 60_000;
     const window = bookingWindow(b.av, at);
-    for (const s of openSlots(b.av, { timeZone, now: at, busy })) {
+    for (const s of openSlots(b.av, { timeZone, now: at, busy, closedDates })) {
       const [st, en] = [s.startAt.getTime(), s.endAt.getTime()];
       // The student's own lessons (with anyone) block that time for them, without the teacher's buffer.
       if (mineAt(st, en)) continue;
@@ -266,6 +270,7 @@ export async function getAvailability(
     }
     for (const g of joinable) {
       if (g.startMs < window.fromMs || g.startMs > window.toMs || mineAt(g.startMs, g.endMs)) continue;
+      if (closedDates.has(wallDateOf(new Date(g.startMs), timeZone))) continue;
       slots.push({
         teacherId: b.teacherId,
         startAt: new Date(g.startMs).toISOString(),
@@ -325,6 +330,10 @@ export async function bookLesson(db: Firestore, input: BookLessonInput, actor: A
     );
     if (!schoolSnap.exists) notFound('School');
     const timeZone = (schoolSnap.get('timezone') as string | undefined) ?? 'Asia/Singapore';
+    const closedDates = closedHolidayDates(resolveHolidaySettings(schoolSnap.get('holidays')));
+    if (closedDates.has(wallDateOf(input.startAt, timeZone))) {
+      throw new HttpsError('failed-precondition', 'The studio is closed that day (public holiday). Please pick another date.');
+    }
     const av: ResolvedAvailability = resolveAvailability(availSnap.data());
     if (!teacherSnap.exists || teacherSnap.get('active') === false || !availSnap.exists || !av.bookable) {
       throw new HttpsError('failed-precondition', 'This teacher is not taking bookings online');

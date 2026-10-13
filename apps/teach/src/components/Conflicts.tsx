@@ -7,6 +7,7 @@ import { studentName, useQuery, useStudents, useTimeZone } from '../hooks';
 import { useSchoolId } from '../session';
 import type { Lesson } from '../types';
 import { useRooms } from './Rooms';
+import { useHolidays } from './Holidays';
 import { offLabel, timeOffRange, useTimeOff } from './TimeOff';
 
 export function ConflictBanner({
@@ -35,6 +36,7 @@ export function ConflictBanner({
   const dayStart = valid ? wallClockToUtc(addDays(date, -1), '12:00', tz) : new Date(0);
   const dayEnd = valid ? wallClockToUtc(addDays(date, 1), '00:00', tz) : new Date(0);
   const places = useRooms();
+  const holidays = useHolidays();
   // The whole day's lessons (any teacher), filtered below by this teacher or this room.
   const lessons = useQuery<Lesson>(valid ? `conflicts:${schoolId}:${date}` : null, () =>
     query(
@@ -60,7 +62,8 @@ export function ConflictBanner({
     const r = timeOffRange(o.entry, tz);
     return r.startMs < end && r.endMs > start;
   });
-  const n = clashes.length + blocked.length;
+  const holiday = holidays.closed ? holidays.names.get(date) : undefined;
+  const n = clashes.length + blocked.length + (holiday ? 1 : 0);
   if (n === 0) {
     return (
       <div className="conflict conflict-none span-all" role="status">
@@ -85,6 +88,7 @@ export function ConflictBanner({
             {l.studentIds.map((id) => studentName(students.byId.get(id))).join(', ') || 'no students'}
           </li>
         ))}
+        {holiday && <li>Public holiday: {holiday} (the studio is closed)</li>}
         {blocked.map((o) => (
           <li key={o.entry.id}>
             Time off {offLabel(o)}

@@ -16,6 +16,7 @@ import {
 } from '@lessonkaki/shared';
 import { BookingHours } from '../components/BookingHours';
 import { LessonTypesEditor } from '../components/LessonTypes';
+import { HOLIDAY_COUNTRIES, resolveHolidaySettings, type HolidayCountry } from '@lessonkaki/shared';
 import { db } from '../firebase';
 import { useQuery, useSchool } from '../hooks';
 import { useSchoolId, useSession } from '../session';
@@ -189,6 +190,39 @@ const ALERT_TYPE_LABELS: Record<string, string> = {
 };
 
 const ALERT_STATUS_LABELS: Record<string, string> = { pending: 'Sending', sent: 'Sent', skipped: 'Not sent', failed: 'Failed' };
+
+function HolidaysForm({ raw, canEdit }: { raw: unknown; canEdit: boolean }) {
+  const initial = resolveHolidaySettings(raw);
+  const [country, setCountry] = useState<HolidayCountry | ''>(initial.country ?? '');
+  const [closed, setClosed] = useState(initial.closed);
+  const s = useSaveSchool();
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    void s.save({ holidays: { country: country || null, closed: !!country && closed } });
+  }
+  return (
+    <form className="form-grid" onSubmit={submit}>
+      <fieldset disabled={!canEdit} className="form-grid span-all fieldset-plain">
+        <label className="field">
+          <span>Country</span>
+          <select value={country} onChange={(e) => setCountry(e.target.value as HolidayCountry | '')}>
+            <option value="">None</option>
+            {Object.entries(HOLIDAY_COUNTRIES).map(([code, name]) => (
+              <option key={code} value={code}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field checkbox span-all">
+          <input type="checkbox" checked={closed} disabled={!country} onChange={(e) => setClosed(e.target.checked)} />
+          <span>Closed on public holidays (no online booking; shown as time off on the calendar)</span>
+        </label>
+        <SaveRow {...s} disabled={!canEdit} />
+      </fieldset>
+    </form>
+  );
+}
 
 function AlertsForm({ settings, canEdit }: { settings: AlertSettings; canEdit: boolean }) {
   const [to, setTo] = useState(settings.to.join(', '));
@@ -413,6 +447,9 @@ export function Settings() {
           <BookingHours />
         </Section>
       )}
+      <Section title="Public holidays" note={ownerNote ?? 'Holidays are labelled on the calendar. Schools that open on them can leave “Closed” off.'}>
+        <HolidaysForm raw={(data as { holidays?: unknown }).holidays} canEdit={isOwner} />
+      </Section>
       <Section title="Branding" note={ownerNote ?? 'Colours, fonts and logo for this school. Leave blank to use the LessonKaki defaults.'}>
         <BrandingForm branding={data.branding ?? {}} canEdit={isOwner} />
       </Section>

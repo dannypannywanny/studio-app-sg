@@ -7,6 +7,7 @@ import { WEEKDAYS, addDays, startOfWeek, wallClockToUtc, wallDateOf, wallTimeOf,
 import { DAY_LABEL, LessonForm } from '../components/LessonForm';
 import { useLessonHref } from '../components/LessonSheet';
 import { useRooms } from '../components/Rooms';
+import { useHolidays } from '../components/Holidays';
 import { TimeOffDetail, TimeOffForm, offEndMin, offLabel, offStartMin, useTimeOff, type PlacedOff } from '../components/TimeOff';
 import { db } from '../firebase';
 import { studentName, useQuery, useStudents, useTeachers, useTimeZone, type WithId } from '../hooks';
@@ -288,6 +289,7 @@ interface GridProps {
 
 function TimeGrid({ days, today, placed, offs, onOff, lessonHref, onDay }: GridProps & { days: string[] }) {
   const places = useRooms();
+  const holidays = useHolidays();
   const roomName = (id: string | null | undefined) => (id ? places.byId.get(id)?.name : undefined);
   const shown = placed.filter((p) => days.includes(p.date));
   const shownOff = offs.filter((o) => days.includes(o.entry.date));
@@ -312,6 +314,11 @@ function TimeGrid({ days, today, placed, offs, onOff, lessonHref, onDay }: GridP
               </button>
             )}
             <span className="muted">{Number(d.slice(8))}</span>
+            {holidays.names.has(d) && (
+              <span className="cal-holiday" title={holidays.names.get(d)}>
+                {holidays.names.get(d)}
+              </span>
+            )}
           </div>
         ))}
       </div>
@@ -328,6 +335,11 @@ function TimeGrid({ days, today, placed, offs, onOff, lessonHref, onDay }: GridP
             {hours.map((h) => (
               <div key={h} className="cal-slot" style={{ height: HOUR_PX }} />
             ))}
+            {holidays.closed && holidays.names.has(d) && (
+              <div className="cal-off cal-closed" style={{ top: 0, height: hours.length * HOUR_PX - 2 }}>
+                <strong>Closed</strong> {holidays.names.get(d)}
+              </div>
+            )}
             {shownOff
               .filter((o) => o.entry.date === d)
               .map((o) => {
@@ -387,6 +399,7 @@ function TimeGrid({ days, today, placed, offs, onOff, lessonHref, onDay }: GridP
 }
 
 function MonthGrid({ month, from, to, today, placed, offs, onOff, lessonHref, onDay }: GridProps & { month: string; from: string; to: string }) {
+  const holidays = useHolidays();
   const days: string[] = [];
   for (let d = from; d < to; d = addDays(d, 1)) days.push(d);
   const byDay = new Map<string, Placed[]>();
@@ -414,6 +427,12 @@ function MonthGrid({ month, from, to, today, placed, offs, onOff, lessonHref, on
               <button className="mcal-num" onClick={() => onDay(d)} title="Open this day">
                 {Number(d.slice(8))}
               </button>
+              {holidays.names.has(d) && (
+                <span className={`mcal-holiday ${holidays.closed ? 'closed' : ''}`} title={holidays.names.get(d)}>
+                  {holidays.closed ? 'Closed · ' : ''}
+                  {holidays.names.get(d)}
+                </span>
+              )}
               {offs
                 .filter((o) => o.entry.date === d)
                 .map((o) => (

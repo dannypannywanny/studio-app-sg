@@ -500,3 +500,8 @@ body.sheet-open { overflow: hidden; }
 .package-pick { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; color: var(--ink); font-weight: 500; }
 .package-pick > span { min-width: 140px; }
 .conflict-none { background: var(--ok-bg); color: var(--ok-fg); box-shadow: inset 3px 0 0 var(--ok-line); }
+.cal-holiday { flex-basis: 100%; order: 3; font-size: 0.68rem; font-weight: 600; color: var(--warn-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal-day-head { flex-wrap: wrap; }
+.cal-closed { cursor: default; left: 0; right: 0; border-radius: 0; opacity: 0.85; }
+.mcal-holiday { padding: 1px 6px; border-radius: 6px; font-size: 0.7rem; font-weight: 600; color: var(--warn-fg); background: var(--warn-bg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mcal-holiday.closed { color: var(--ink-2); background: repeating-linear-gradient(-45deg, var(--muted-bg) 0 6px, color-mix(in oklab, var(--muted-bg) 55%, transparent) 6px 12px); }

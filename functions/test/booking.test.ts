@@ -254,3 +254,15 @@ describe('group lessons (subject capacity)', () => {
     expect(await slotTimes(t)).toEqual([]);
   });
 });
+
+describe('public holidays', () => {
+  it('a school closed on public holidays offers nothing that day and refuses bookings', async () => {
+    const t = await setup();
+    await db.doc(`schools/${t.schoolId}`).update({ holidays: { country: 'SG', closed: true } });
+    const holidayNow = sg('2027-02-07', '09:00'); // Sunday; Monday 2027-02-08 is Chinese New Year (observed)
+    const res = await getAvailability(db, { schoolId: t.schoolId }, student(t), holidayNow);
+    expect(res.slots.filter((s) => s.startAt.startsWith('2027-02-08'))).toEqual([]);
+    expect(res.slots.length).toBeGreaterThan(0); // other days still open
+    await expect(book(t, '2027-02-08', '10:00', { at: holidayNow })).rejects.toThrow(/public holiday/);
+  });
+});
