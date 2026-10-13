@@ -472,3 +472,20 @@ body.sheet-open { overflow: hidden; }
 .lesson-types-preview ul { margin: 6px 0 0; padding-left: 1.1em; }
 @media (max-width: 640px) { .form-grid .lesson-type { grid-column: 1 / -1; } }
 .usual-length { width: min(100%, 260px); }
+
+/* ---------- Time off on the calendar ---------- */
+.cal-off, .mcal-off {
+  border: 0; cursor: pointer; text-align: left; color: var(--ink-2); font: inherit;
+  background: repeating-linear-gradient(-45deg, var(--muted-bg) 0 6px, color-mix(in oklab, var(--muted-bg) 55%, transparent) 6px 12px);
+  box-shadow: inset 3px 0 0 var(--ink-3);
+}
+.cal-off {
+  position: absolute; left: 4px; right: 4px; overflow: hidden; padding: 4px 8px; border-radius: 8px;
+  display: flex; flex-wrap: wrap; align-content: flex-start; gap: 0 4px;
+  font-size: 0.74rem; line-height: 1.3;
+}
+.cal-off:hover, .mcal-off:hover { color: var(--ink); }
+.cal-off strong { color: var(--ink); }
+.cal-off-note { color: var(--ink-3); }
+.mcal-off { padding: 2px 6px; border-radius: 6px; font-size: 0.72rem; font-weight: 600; line-height: 1.45; box-shadow: inset 2px 0 0 var(--ink-3); }
+.cal-key-off { background: var(--muted-bg); box-shadow: inset 3px 0 0 var(--ink-3); }

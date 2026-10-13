@@ -6,6 +6,7 @@ import { Link, useSearchParams } from 'react-router';
 import { WEEKDAYS, addDays, startOfWeek, wallClockToUtc, wallDateOf, wallTimeOf, weekdayOf } from '@lessonkaki/shared';
 import { DAY_LABEL, LessonForm } from '../components/LessonForm';
 import { useLessonHref } from '../components/LessonSheet';
+import { TimeOffDetail, TimeOffForm, offEndMin, offLabel, offStartMin, useTimeOff, type PlacedOff } from '../components/TimeOff';
 import { db } from '../firebase';
 import { studentName, useQuery, useStudents, useTeachers, useTimeZone, type WithId } from '../hooks';
 import { useSchoolId, useSession } from '../session';
@@ -79,6 +80,10 @@ export function Calendar() {
   const date = isDate(urlDate) ? urlDate : today;
   const [teacherFilter, setTeacherFilter] = useState('');
   const [adding, setAdding] = useState<string | null>(null);
+  const [blocking, setBlocking] = useState<string | null>(null);
+  const [openOff, setOpenOff] = useState<PlacedOff | null>(null);
+  const allOff = useTimeOff();
+  const offs = allOff.filter((o) => !teacherFilter || o.teacherId === teacherFilter);
   const students = useStudents();
   const teachers = useTeachers();
   const lessonHref = useLessonHref();
@@ -160,14 +165,35 @@ export function Calendar() {
               →
             </button>
           </div>
+          {blocking === null && (
+            <button
+              className="btn"
+              onClick={() => {
+                setAdding(null);
+                setOpenOff(null);
+                setBlocking(view === 'day' ? date : today);
+              }}
+            >
+              Block time
+            </button>
+          )}
           {adding === null && (
-            <button className="btn btn-primary" onClick={() => setAdding(view === 'day' ? date : today)}>
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                setBlocking(null);
+                setOpenOff(null);
+                setAdding(view === 'day' ? date : today);
+              }}
+            >
               New lesson
             </button>
           )}
         </div>
       </div>
       {adding !== null && <LessonForm key={adding} initialDate={adding} onDone={() => setAdding(null)} />}
+      {blocking !== null && <TimeOffForm key={blocking} initialDate={blocking} onDone={() => setBlocking(null)} />}
+      {openOff && <TimeOffDetail key={openOff.entry.id} off={openOff} onDone={() => setOpenOff(null)} />}
       {lessons.error && <p className="error">{lessons.error.message}</p>}
 
       {view === 'month' ? (
@@ -177,6 +203,13 @@ export function Calendar() {
           to={range.to}
           today={today}
           placed={placed}
+          offs={offs}
+          onOff={(o) => {
+            setAdding(null);
+            setBlocking(null);
+            setOpenOff(o);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
           lessonHref={lessonHref}
           onDay={(d) => go({ view: 'day', date: d })}
         />
@@ -185,13 +218,20 @@ export function Calendar() {
           days={view === 'day' ? [date] : Array.from({ length: 7 }, (_, i) => addDays(range.from, i))}
           today={today}
           placed={placed}
+          offs={offs}
+          onOff={(o) => {
+            setAdding(null);
+            setBlocking(null);
+            setOpenOff(o);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
           lessonHref={lessonHref}
           onDay={(d) => go({ view: 'day', date: d })}
         />
       )}
       <p className="muted legend">
         <span className="cal-key state-unmarked" /> Not marked <span className="cal-key state-marked" /> Marked{' '}
-        <span className="cal-key state-cancelled" /> Cancelled · ↻ weekly
+        <span className="cal-key state-cancelled" /> Cancelled <span className="cal-key cal-key-off" /> Time off · ↻ weekly
       </p>
     </section>
   );
@@ -200,14 +240,18 @@ export function Calendar() {
 interface GridProps {
   today: string;
   placed: Placed[];
+  offs: PlacedOff[];
+  onOff: (o: PlacedOff) => void;
   lessonHref: (id: string) => string;
   onDay: (d: string) => void;
 }
 
-function TimeGrid({ days, today, placed, lessonHref, onDay }: GridProps & { days: string[] }) {
+function TimeGrid({ days, today, placed, offs, onOff, lessonHref, onDay }: GridProps & { days: string[] }) {
   const shown = placed.filter((p) => days.includes(p.date));
+  const shownOff = offs.filter((o) => days.includes(o.entry.date));
   const firstHour = Math.min(DEFAULT_FIRST_HOUR, ...shown.map((p) => Math.floor(p.startMin / 60)));
   const lastHour = Math.max(DEFAULT_LAST_HOUR, ...shown.map((p) => Math.ceil((p.startMin + p.l.durationMin) / 60)));
+  const clip = (m: number) => Math.min(Math.max(m, firstHour * 60), lastHour * 60);
   const hours = Array.from({ length: lastHour - firstHour }, (_, i) => firstHour + i);
   const single = days.length === 1;
   const cols = { gridTemplateColumns: `60px repeat(${days.length}, minmax(112px, 1fr))` };
@@ -242,6 +286,25 @@ function TimeGrid({ days, today, placed, lessonHref, onDay }: GridProps & { days
             {hours.map((h) => (
               <div key={h} className="cal-slot" style={{ height: HOUR_PX }} />
             ))}
+            {shownOff
+              .filter((o) => o.entry.date === d)
+              .map((o) => {
+                const top = clip(offStartMin(o.entry));
+                const bottom = clip(offEndMin(o.entry));
+                if (bottom <= top) return null;
+                return (
+                  <button
+                    key={`${o.teacherId}:${o.entry.id}`}
+                    className="cal-off"
+                    style={{ top: ((top - firstHour * 60) / 60) * HOUR_PX, height: ((bottom - top) / 60) * HOUR_PX - 2 }}
+                    onClick={() => onOff(o)}
+                    title={`Time off · ${o.teacherName} · ${offLabel(o)}${o.entry.note ? ` · ${o.entry.note}` : ''}`}
+                  >
+                    <strong>Time off</strong> {offLabel(o)}
+                    {o.entry.note && <span className="cal-off-note"> · {o.entry.note}</span>}
+                  </button>
+                );
+              })}
             {shown
               .filter((p) => p.date === d)
               .map(({ l, startMin, time, names }) => (
@@ -275,7 +338,7 @@ function TimeGrid({ days, today, placed, lessonHref, onDay }: GridProps & { days
   );
 }
 
-function MonthGrid({ month, from, to, today, placed, lessonHref, onDay }: GridProps & { month: string; from: string; to: string }) {
+function MonthGrid({ month, from, to, today, placed, offs, onOff, lessonHref, onDay }: GridProps & { month: string; from: string; to: string }) {
   const days: string[] = [];
   for (let d = from; d < to; d = addDays(d, 1)) days.push(d);
   const byDay = new Map<string, Placed[]>();
@@ -303,6 +366,13 @@ function MonthGrid({ month, from, to, today, placed, lessonHref, onDay }: GridPr
               <button className="mcal-num" onClick={() => onDay(d)} title="Open this day">
                 {Number(d.slice(8))}
               </button>
+              {offs
+                .filter((o) => o.entry.date === d)
+                .map((o) => (
+                  <button key={`${o.teacherId}:${o.entry.id}`} className="mcal-off" onClick={() => onOff(o)} title={o.entry.note ?? 'Time off'}>
+                    Off {o.allDay ? 'all day' : offLabel(o)}
+                  </button>
+                ))}
               {list.slice(0, fits).map(({ l, time, names }) => (
                 <Link key={l.id} to={lessonHref(l.id)} className={`mcal-ev state-${stateOf(l)}`} title={`${time} · ${names}`}>
                   <span className="mcal-time">{time}</span> <span className="mcal-who">{names || 'No students'}</span>

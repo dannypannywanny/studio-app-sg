@@ -111,3 +111,30 @@ describe('slotLockId', () => {
     expect(slotLockId('t1', new Date('2026-10-18T23:30:00Z'), TZ)).toBe('t1_20261019');
   });
 });
+
+describe('time off', () => {
+  const tz = 'Asia/Singapore';
+  const av = resolveAvailability({
+    weekly: [{ day: 'MO', start: '10:00', end: '14:00', inPerson: true, online: true }],
+    lessonMin: 60,
+    stepMin: 60,
+    bufferMin: 0,
+    minNoticeHours: 0,
+    horizonDays: 30,
+    timeOff: [
+      { id: 'a', date: '2030-01-07', start: '11:00', end: '12:30', note: 'Dentist' },
+      { id: 'b', date: '2030-01-14', start: '00:00', end: '24:00' },
+      { id: 'bad', date: 'nope', start: '11:00', end: '12:00' },
+    ],
+  });
+  const now = wallClockToUtc('2030-01-06', '09:00', tz);
+  const starts = (date: string) =>
+    openSlots(av, { timeZone: tz, now, busy: [], from: wallClockToUtc(date, '00:00', tz), to: wallClockToUtc(date, '23:59', tz) }).map((x) =>
+      x.startAt.toISOString(),
+    );
+
+  it('drops malformed entries', () => expect(av.timeOff.map((t) => t.id)).toEqual(['a', 'b']));
+  it('hides slots overlapping a block, keeps the rest', () =>
+    expect(starts('2030-01-07')).toEqual(['10:00', '13:00'].map((t) => wallClockToUtc('2030-01-07', t, tz).toISOString())));
+  it('an all-day block closes the day', () => expect(starts('2030-01-14')).toEqual([]));
+});
