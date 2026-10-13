@@ -1,10 +1,12 @@
 // Student self-booking (learn site): open slots from teacher hours, and booking one of them.
 //
 // A teacher is busy during any scheduled lesson that still has someone on it (booked, present or
-// absent). A lesson whose only student cancelled frees the slot again. Nothing is charged at booking:
+// absent). A lesson whose only student cancelled frees the slot again. Group lessons: a lesson of the
+// booked subject with places left (subjects.capacity > 1) stays bookable at its own start and length, and
+// booking it adds the student to that lesson; any other time overlapping it is still taken. Nothing is charged at booking:
 // the lesson is an ordinary one-on-one and credits move when attendance is marked (policy debitOn
 // 'mark'), going owed when the student has none.
-import { Timestamp, type DocumentReference, type DocumentSnapshot, type Firestore, type Query, type QuerySnapshot } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp, type DocumentReference, type DocumentSnapshot, type Firestore, type Query, type QuerySnapshot } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
 import {
   bookingWindow,
@@ -17,6 +19,7 @@ import {
   type ResolvedAvailability,
 } from '@lessonkaki/shared';
 import { enqueueAlert } from './alerts';
+import { attendanceStateOf, newAttendeeDoc } from './attendance';
 import { audit, notFound, now, readAll, schoolRef, type Actor } from './db';
 import { MAX_DURATION_MIN, checkRefs, teacherWindow, writeLesson } from './lessons';
 
@@ -50,6 +53,40 @@ const maxUpcoming = (school: DocumentSnapshot): number | null => {
   return typeof n === 'number' && Number.isInteger(n) && n >= 1 ? n : null;
 };
 
+/** A teacher's lesson that still has someone on it, with how many places are taken. */
+export interface HeldLesson extends BusyInterval {
+  lessonId: string;
+  subjectId: string;
+  isOnline: boolean;
+  locationId: string | null;
+  /** Lesson's own capacity field (at least its number of students). */
+  capacity: number;
+  /** Students holding a place (booked / present / absent). */
+  taken: number;
+  statuses: AttendanceStatus[];
+}
+
+/** Places on a lesson: the larger of the subject's capacity and the lesson's own. */
+export const placesOf = (l: HeldLesson, subjectCapacity: number) => Math.max(l.capacity, subjectCapacity);
+
+/** Capacity of a subject (subjects/{id}.capacity), 1 when unset. */
+export function subjectCapacity(subject: DocumentSnapshot | undefined): number {
+  const n = subject?.get('capacity');
+  return typeof n === 'number' && Number.isInteger(n) && n >= 1 ? n : 1;
+}
+
+/**
+ * Splits a teacher's lessons for one booking: `joinable` group lessons of `subjectId` with places left and
+ * exactly `lessonMs` long; everything else is `busy`.
+ */
+export function splitHeld(held: HeldLesson[], subjectId: string | null, capacity: number, lessonMs: number) {
+  const joinable = held.filter(
+    (l) => subjectId !== null && l.subjectId === subjectId && l.endMs - l.startMs === lessonMs && l.taken < placesOf(l, capacity) && placesOf(l, capacity) > 1,
+  );
+  const ids = new Set(joinable.map((l) => l.lessonId));
+  return { joinable, busy: held.filter((l) => !ids.has(l.lessonId)) };
+}
+
 /** The teacher's lessons overlapping [fromMs, toMs) that still have a student on them. */
 export async function teacherBusy(
   read: Reader,
@@ -58,6 +95,16 @@ export async function teacherBusy(
   fromMs: number,
   toMs: number,
 ): Promise<BusyInterval[]> {
+  return teacherHeld(read, school, teacherId, fromMs, toMs);
+}
+
+export async function teacherHeld(
+  read: Reader,
+  school: DocumentReference,
+  teacherId: string,
+  fromMs: number,
+  toMs: number,
+): Promise<HeldLesson[]> {
   const lessons = (await read.query(teacherWindow(school, teacherId, fromMs, toMs))).docs.filter(
     (d) => d.get('status') !== 'cancelled' && endMs(d) > fromMs,
   );
@@ -81,7 +128,22 @@ export async function teacherBusy(
       // No attendee docs found (shouldn't happen): keep it busy rather than double-book.
       return !list || list.some((s) => HOLDS_TIME.has(s));
     })
-    .map((d) => ({ startMs: startMs(d), endMs: endMs(d) }));
+    .map((d) => {
+      const list = statuses.get(d.id) ?? [];
+      const n = d.get('capacity');
+      return {
+        lessonId: d.id,
+        startMs: startMs(d),
+        endMs: endMs(d),
+        subjectId: d.get('subjectId') as string,
+        isOnline: d.get('isOnline') === true,
+        locationId: (d.get('locationId') as string | null | undefined) ?? null,
+        capacity: typeof n === 'number' && n >= 1 ? n : 1,
+        // Unknown attendees (shouldn't happen) count as full.
+        taken: list.length ? list.filter((s) => HOLDS_TIME.has(s)).length : Number.MAX_SAFE_INTEGER,
+        statuses: list,
+      };
+    });
 }
 
 interface OwnLesson {
@@ -143,7 +205,7 @@ export interface AvailabilityResult {
   timeZone: string;
   teachers: BookableTeacher[];
   /** ISO instants, sorted. */
-  slots: { teacherId: string; startAt: string; inPerson: boolean; online: boolean }[];
+  slots: { teacherId: string; startAt: string; inPerson: boolean; online: boolean; spotsLeft?: number }[];
   /** Upcoming lessons the student booked here, and how many they may hold (max null = no limit). Null for staff. */
   upcoming: { booked: number; max: number | null } | null;
 }
@@ -170,8 +232,12 @@ export async function getAvailability(
     const teacher = teacherSnaps[i]!;
     const av = resolveAvailability(d.data());
     if (!teacher.exists || teacher.get('active') === false || !av.bookable || !av.weekly.length) return [];
-    return [{ teacherId: d.id, teacher, av }];
+    const subjectId = av.subjectId ?? ((teacher.get('subjectIds') as string[] | undefined) ?? [])[0] ?? null;
+    return [{ teacherId: d.id, teacher, av, subjectId }];
   });
+  const subjectIds = [...new Set(bookable.flatMap((b) => (b.subjectId ? [b.subjectId] : [])))];
+  const subjectSnaps = await read.docs(subjectIds.map((id) => school.collection('subjects').doc(id)));
+  const capacityOf = new Map(subjectIds.map((id, i) => [id, subjectCapacity(subjectSnaps[i])]));
   if (!bookable.length) return { timeZone, teachers: [], slots: [], upcoming: null };
 
   // One window wide enough for every teacher.
@@ -182,12 +248,31 @@ export async function getAvailability(
   const ownBusy = own.filter((l) => l.active).map((l) => ({ startMs: l.startMs, endMs: l.endMs }));
 
   const slots: AvailabilityResult['slots'] = [];
+  const mineAt = (startMs: number, endMs: number) => ownBusy.some((o) => o.startMs < endMs && o.endMs > startMs);
   for (const b of bookable) {
-    const busy = await teacherBusy(read, school, b.teacherId, fromMs, toMs + MAX_LESSON_MS);
+    const held = await teacherHeld(read, school, b.teacherId, fromMs, toMs + MAX_LESSON_MS);
+    const capacity = b.subjectId ? (capacityOf.get(b.subjectId) ?? 1) : 1;
+    const { joinable, busy } = splitHeld(held, b.subjectId, capacity, b.av.lessonMin * 60_000);
+    const bufferMs = b.av.bufferMin * 60_000;
+    const window = bookingWindow(b.av, at);
     for (const s of openSlots(b.av, { timeZone, now: at, busy })) {
+      const [st, en] = [s.startAt.getTime(), s.endAt.getTime()];
       // The student's own lessons (with anyone) block that time for them, without the teacher's buffer.
-      if (ownBusy.some((o) => o.startMs < s.endAt.getTime() && o.endMs > s.startAt.getTime())) continue;
+      if (mineAt(st, en)) continue;
+      // A group lesson is only joined at its own time; other overlapping times are taken.
+      if (joinable.some((g) => g.startMs !== st && g.startMs < en + bufferMs && g.endMs > st - bufferMs)) continue;
+      if (joinable.some((g) => g.startMs === st)) continue; // offered below, with its own mode and places
       slots.push({ teacherId: b.teacherId, startAt: s.startAt.toISOString(), inPerson: s.inPerson, online: s.online });
+    }
+    for (const g of joinable) {
+      if (g.startMs < window.fromMs || g.startMs > window.toMs || mineAt(g.startMs, g.endMs)) continue;
+      slots.push({
+        teacherId: b.teacherId,
+        startAt: new Date(g.startMs).toISOString(),
+        inPerson: !g.isOnline,
+        online: g.isOnline,
+        spotsLeft: placesOf(g, capacity) - g.taken,
+      });
     }
   }
   slots.sort((x, y) => x.startAt.localeCompare(y.startAt));
@@ -247,6 +332,8 @@ export async function bookLesson(db: Firestore, input: BookLessonInput, actor: A
     const subjectId = av.subjectId ?? ((teacherSnap.get('subjectIds') as string[] | undefined) ?? [])[0];
     if (!subjectId) throw new HttpsError('failed-precondition', 'This teacher has no subject set up for booking');
     await checkRefs(tx, school, { teacherId: input.teacherId, subjectId, studentIds: [studentId] });
+    const [subjectSnap] = await read.docs([school.collection('subjects').doc(subjectId)]);
+    const capacity = subjectCapacity(subjectSnap);
 
     const end = start + av.lessonMin * 60_000;
     // Bookings for this teacher and day(s) run one after the other (see slotLockId).
@@ -271,10 +358,50 @@ export async function bookLesson(db: Firestore, input: BookLessonInput, actor: A
     }
 
     const bufferMs = av.bufferMin * 60_000;
-    const busy = await teacherBusy(read, school, input.teacherId, start - bufferMs, end + bufferMs);
+    const held = await teacherHeld(read, school, input.teacherId, start - bufferMs - MAX_LESSON_MS, end + bufferMs);
+    const { joinable, busy } = splitHeld(held, subjectId, capacity, av.lessonMin * 60_000);
+
+    // A group lesson at exactly this time with a place left: join it.
+    const group = joinable.find((g) => g.startMs === start);
+    if (group) {
+      if (input.mode !== (group.isOnline ? 'online' : 'inPerson')) {
+        throw new HttpsError('failed-precondition', group.isOnline ? 'That class is online' : 'That class is in person');
+      }
+      if (start < window.fromMs || start > window.toMs) throw new HttpsError('failed-precondition', 'That time is no longer available. Please pick another.');
+      const lessonRef = school.collection('lessons').doc(group.lessonId);
+      const attendeeRef = lessonRef.collection('attendees').doc(studentId);
+      const [attendeeSnap] = await read.docs([attendeeRef]);
+      if (attendeeSnap?.exists) {
+        // Was on it before (cancelled or removed): the studio puts them back, so credits are handled right.
+        throw new HttpsError('failed-precondition', 'You were on this class before. Please contact the studio to rejoin.');
+      }
+      for (const ref of lockRefs) tx.set(ref, { teacherId: input.teacherId, lastBookedAt: now(), updatedAt: now() }, { merge: true });
+      tx.create(attendeeRef, newAttendeeDoc(input.schoolId, group.lessonId, studentId, Timestamp.fromMillis(start), 'portal'));
+      tx.update(lessonRef, {
+        studentIds: FieldValue.arrayUnion(studentId),
+        capacity: placesOf(group, capacity),
+        attendanceState: attendanceStateOf([...group.statuses, 'booked']),
+        updatedAt: now(),
+      });
+      enqueueAlert(
+        tx,
+        school,
+        `lesson_${group.lessonId}_${studentId}`,
+        { type: 'lesson.booked', lessonId: group.lessonId, studentIds: [studentId], startAt: input.startAt, source: 'portal', payment: null },
+        actor,
+        at,
+      );
+      audit(tx, school, actor, 'bookLesson', `lessons/${group.lessonId}`, { teacherId: input.teacherId, studentId, mode: input.mode, joined: true });
+      return { lessonId: group.lessonId, existing: false };
+    }
+
     const slot = openSlots(av, { timeZone, now: at, busy, from: input.startAt, to: input.startAt }).find(
       (s) => s.startAt.getTime() === start,
     );
+    // Starting a new lesson that would overlap a group class (other than joining it) isn't allowed.
+    if (slot && joinable.some((g) => g.startMs < end + bufferMs && g.endMs > start - bufferMs)) {
+      throw new HttpsError('failed-precondition', 'That time is no longer available. Please pick another.');
+    }
     if (!slot) throw new HttpsError('failed-precondition', 'That time is no longer available. Please pick another.');
     if (!slot[input.mode]) {
       throw new HttpsError('failed-precondition', input.mode === 'online' ? 'That time is in person only' : 'That time is online only');
@@ -288,7 +415,7 @@ export async function bookLesson(db: Firestore, input: BookLessonInput, actor: A
       tx,
       lessonRef,
       input.schoolId,
-      { teacherId: input.teacherId, subjectId, isOnline, locationId: isOnline ? null : slot.locationId, durationMin: av.lessonMin },
+      { teacherId: input.teacherId, subjectId, isOnline, locationId: isOnline ? null : slot.locationId, durationMin: av.lessonMin, capacity },
       start,
       [studentId],
       actor,

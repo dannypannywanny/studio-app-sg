@@ -5,6 +5,7 @@ import { WEEKDAYS, wallClockToUtc, wallDateOf, weekdayOf, type Weekday } from '@
 import { call } from '../firebase';
 import { useTimeZone } from '../hooks';
 import { useLessonTypes } from './LessonTypes';
+import { ConflictBanner } from './Conflicts';
 import { useOpenLesson } from './LessonSheet';
 import { StudentMultiPicker } from './StudentPicker';
 import { useSchoolId, useSession } from '../session';
@@ -156,6 +157,7 @@ export function LessonForm({ onDone, initialDate }: { onDone: () => void; initia
           onChange={(e) => setMinutes(Number(e.target.value))}
         />
       </label>
+      {type && <ConflictBanner teacherId={type.teacherId} date={date} time={time} durationMin={durationMin} repeats={repeats} />}
       <label className="field checkbox">
         <input type="checkbox" checked={isOnline} onChange={(e) => setOnline(e.target.checked)} />
         <span>Online</span>

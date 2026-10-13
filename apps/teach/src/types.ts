@@ -37,6 +37,8 @@ export interface Subject {
   durations?: number[];
   defaultDurationMin: number;
   teacherIds?: string[];
+  /** Most students in one lesson (group classes); 1 = one-on-one. */
+  capacity?: number;
   active: boolean;
 }
 

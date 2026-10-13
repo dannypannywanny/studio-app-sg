@@ -77,6 +77,7 @@ function SubjectRow({ subject, teachers }: { subject: WithId<Subject>; teachers:
   const [name, setName] = useState(subject.name);
   const [lengths, setLengths] = useState<number[]>(durationsOf(subject));
   const [usual, setUsual] = useState<number>(defaultOf(subject));
+  const [capacity, setCapacity] = useState<number>(subject.capacity ?? 1);
   const [teacherIds, setTeacherIds] = useState<string[]>(teachers.filter((t) => teaches(t, subject)).map((t) => t.id));
   const [custom, setCustom] = useState('');
   const [state, setState] = useState<{ busy: boolean; saved: boolean; error: string | null }>({ busy: false, saved: false, error: null });
@@ -112,6 +113,7 @@ function SubjectRow({ subject, teachers }: { subject: WithId<Subject>; teachers:
         durations: lengths,
         defaultDurationMin: lengths.includes(usual) ? usual : lengths[0],
         teacherIds,
+        capacity: Math.min(Math.max(Math.round(capacity) || 1, 1), 200),
         active,
         updatedAt: serverTimestamp(),
       });
@@ -194,6 +196,22 @@ function SubjectRow({ subject, teachers }: { subject: WithId<Subject>; teachers:
               </select>
             </label>
           )}
+          <label className="field capacity-field">
+            <span>Max students per lesson</span>
+            <input
+              type="number"
+              min={1}
+              max={200}
+              value={capacity}
+              onChange={(e) => {
+                setCapacity(Number(e.target.value));
+                touched();
+              }}
+            />
+            <span className="field-help">
+              {capacity > 1 ? `Group class: a booked time stays open online until ${capacity} students are on it.` : 'One-on-one: a booked time is taken.'}
+            </span>
+          </label>
           <div className="field">
             <span>Taught by</span>
             <div className="chips">

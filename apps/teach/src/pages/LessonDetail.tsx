@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from 'react-router';
 import { WEEKDAYS, resolvePolicy, wallDateOf, wallTimeOf, type AttendanceStatus, type Weekday } from '@lessonkaki/shared';
 import { DAY_LABEL } from '../components/LessonForm';
 import { StudentSearch } from '../components/StudentPicker';
+import { ConflictBanner } from '../components/Conflicts';
 import { useSubjects } from '../components/LessonTypes';
 import { call, db } from '../firebase';
 import { studentName, useDoc, useFormatTs, useQuery, useSchool, useStudents, useTeachers, useTimeZone } from '../hooks';
@@ -156,6 +157,9 @@ function Reschedule({ lesson, onDone }: { lesson: Lesson & { id: string }; onDon
             ))}
           </select>
         </label>
+        {scope === 'one' && (
+          <ConflictBanner teacherId={teacherId} date={date} time={time} durationMin={durationMin} ignoreLessonId={lesson.id} />
+        )}
       </div>
       <div className="row">
         <button className="btn btn-primary" disabled={busy} onClick={() => void save()}>

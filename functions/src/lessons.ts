@@ -40,6 +40,8 @@ export interface LessonShape {
   isOnline: boolean;
   meetingUrl?: string | null;
   durationMin: number;
+  /** Places on the lesson (group classes); defaults to the number of students. */
+  capacity?: number;
 }
 
 /** Writes a new scheduled lesson and its booked attendees. */
@@ -72,7 +74,7 @@ export function writeLesson(
     occurrenceDate: series?.occurrenceDate ?? null,
     isException: false,
     status: 'scheduled',
-    capacity: Math.max(1, studentIds.length),
+    capacity: Math.max(1, shape.capacity ?? 1, studentIds.length),
     studentIds,
     attendanceState: 'unmarked',
     createdBy: actor.uid,

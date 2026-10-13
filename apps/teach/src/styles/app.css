@@ -489,3 +489,9 @@ body.sheet-open { overflow: hidden; }
 .cal-off-note { color: var(--ink-3); }
 .mcal-off { padding: 2px 6px; border-radius: 6px; font-size: 0.72rem; font-weight: 600; line-height: 1.45; box-shadow: inset 2px 0 0 var(--ink-3); }
 .cal-key-off { background: var(--muted-bg); box-shadow: inset 3px 0 0 var(--ink-3); }
+.capacity-field { width: min(100%, 360px); }
+.conflict {
+  padding: 12px 16px; border-radius: 12px; background: var(--due-bg); color: var(--due-fg);
+  box-shadow: inset 3px 0 0 var(--warn-line); font-size: var(--text-sm);
+}
+.conflict ul { margin: 4px 0 0; padding-left: 1.1em; }

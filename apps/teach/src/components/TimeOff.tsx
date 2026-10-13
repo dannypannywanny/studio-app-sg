@@ -2,7 +2,7 @@
 // slot inside one. Lessons already in that time are left alone.
 import { arrayRemove, arrayUnion, collection, doc, query, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { useMemo, useState, type FormEvent } from 'react';
-import { resolveAvailability, type TimeOff } from '@lessonkaki/shared';
+import { resolveAvailability, timeOffInterval, type TimeOff } from '@lessonkaki/shared';
 import { db } from '../firebase';
 import { useQuery, useTeachers } from '../hooks';
 import { useSchoolId, useSession } from '../session';
@@ -19,6 +19,7 @@ export interface PlacedOff {
 const minutes = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
 export const offStartMin = (t: TimeOff) => minutes(t.start);
 export const offEndMin = (t: TimeOff) => (t.end === '24:00' ? 24 * 60 : minutes(t.end));
+export const timeOffRange = (t: TimeOff, tz: string) => timeOffInterval(t, tz);
 export const offLabel = (o: PlacedOff) => (o.allDay ? 'All day' : `${o.entry.start}–${o.entry.end}`);
 
 /** Every teacher's time off, keyed by date. */
