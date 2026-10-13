@@ -499,3 +499,4 @@ body.sheet-open { overflow: hidden; }
 .package-picks { display: grid; gap: 6px; }
 .package-pick { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; color: var(--ink); font-weight: 500; }
 .package-pick > span { min-width: 140px; }
+.conflict-none { background: var(--ok-bg); color: var(--ok-fg); box-shadow: inset 3px 0 0 var(--ok-line); }

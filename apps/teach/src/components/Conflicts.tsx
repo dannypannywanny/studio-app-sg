@@ -51,7 +51,14 @@ export function ConflictBanner({
     return r.startMs < end && r.endMs > start;
   });
   const n = clashes.length + blocked.length;
-  if (n === 0) return null;
+  if (n === 0) {
+    return (
+      <div className="conflict conflict-none span-all" role="status">
+        <strong>No conflicts</strong>
+        <span> · {lessons.loading ? 'checking the teacher’s lessons and time off…' : 'nothing else on at this time'}</span>
+      </div>
+    );
+  }
 
   const fmt = (ms: number) => wallTimeOf(new Date(ms), tz);
   return (
