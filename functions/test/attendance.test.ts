@@ -267,3 +267,31 @@ describe('lesson notes for the student', () => {
     expect((await attendee(t, id)).sharedNote).toBeNull();
   });
 });
+
+describe('make-ups', () => {
+  it('an absence that used a credit gets it back once; packages can cap make-ups', async () => {
+    const { grantMakeUp } = await import('../src/jobs');
+    const t = await school();
+    await db.doc(`schools/${t.schoolId}`).update({ makeUps: { perPackage: 1 } });
+    const sale = await sell(t, t.pkg30);
+    const first = await lesson(t);
+    await mark(t, first, 'absent');
+    expect(await summary(t)).toMatchObject({ sessionsAvailable: 3 });
+    await grantMakeUp(db, { schoolId: t.schoolId, lessonId: first, studentId: t.studentId }, owner);
+    expect(await summary(t)).toMatchObject({ sessionsAvailable: 4 });
+    expect((await attendee(t, first)).makeUp).toMatchObject({ enrolmentId: sale.enrolmentId });
+    await expect(grantMakeUp(db, { schoolId: t.schoolId, lessonId: first, studentId: t.studentId }, owner)).rejects.toThrow(/already/);
+    const second = await lesson(t);
+    await mark(t, second, 'absent');
+    await expect(grantMakeUp(db, { schoolId: t.schoolId, lessonId: second, studentId: t.studentId }, owner)).rejects.toThrow(/limit is 1/);
+  });
+
+  it('present lessons are not eligible', async () => {
+    const { grantMakeUp } = await import('../src/jobs');
+    const t = await school();
+    await sell(t, t.pkg30);
+    const id = await lesson(t);
+    await mark(t, id, 'present');
+    await expect(grantMakeUp(db, { schoolId: t.schoolId, lessonId: id, studentId: t.studentId }, owner)).rejects.toThrow(/absences and late cancels/);
+  });
+});

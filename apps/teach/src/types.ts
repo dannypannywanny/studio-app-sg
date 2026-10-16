@@ -157,5 +157,7 @@ export interface Attendee {
   preferredEnrolmentId?: string | null;
   /** Note for the student about this lesson (shown in the learn portal). */
   sharedNote?: string | null;
+  /** A make-up was given for this absence / late cancel (the credit came back). */
+  makeUp?: { grantedAt: Ts; enrolmentId: string } | null;
   markedAt: Ts | null;
 }

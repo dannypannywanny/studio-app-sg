@@ -197,3 +197,76 @@ export async function adjustCredits(
     return result;
   });
 }
+
+// ---------------------------------------------------------------------------------------------
+// grantMakeUp (owner/admin): give back the credit an absence or late cancel used, so the student can book a
+// make-up. The credit returns to the same package (or, if it has expired since, a 1-session make-up credit
+// valid `makeUps.validityDays`). Once per attendee; schools can cap make-ups per package (schools.makeUps).
+// ---------------------------------------------------------------------------------------------
+
+export interface GrantMakeUpInput {
+  schoolId: string;
+  lessonId: string;
+  studentId: string;
+}
+
+export async function grantMakeUp(db: Firestore, input: GrantMakeUpInput, actor: Actor, at: Date = new Date()) {
+  if (!(actor.role === 'owner' || actor.role === 'admin' || actor.role === 'system')) {
+    throw new HttpsError('permission-denied', 'Only an owner or admin can give make-ups');
+  }
+  const school = schoolRef(db, input.schoolId);
+  const lessonRef = school.collection('lessons').doc(input.lessonId);
+  const attendeeRef = lessonRef.collection('attendees').doc(input.studentId);
+  return db.runTransaction(async (tx) => {
+    const [schoolSnap, lessonSnap, attendeeSnap] = await readAll(tx, school, lessonRef, attendeeRef);
+    if (!lessonSnap.exists) notFound('Lesson');
+    if (!attendeeSnap.exists) notFound('Student on this lesson');
+    const status = attendeeSnap.get('status') as string;
+    if (status !== 'absent' && status !== 'lateCancelled') {
+      throw new HttpsError('failed-precondition', 'Make-ups are for absences and late cancels');
+    }
+    if (attendeeSnap.get('makeUp')) throw new HttpsError('already-exists', 'A make-up was already given for this lesson');
+    if (!attendeeSnap.get('ledgerEntryId')) throw new HttpsError('failed-precondition', 'No credit was used for this lesson');
+    const perPackage = schoolSnap.get('makeUps.perPackage') as number | null | undefined;
+    const validityDays = (schoolSnap.get('makeUps.validityDays') as number | undefined) ?? 30;
+    const ct = new CreditTx(tx, school, actor, at);
+    const enrolmentId = attendeeSnap.get('enrolmentId') as string | null;
+    const lotSnap = enrolmentId ? await tx.get(school.collection('enrolments').doc(enrolmentId)) : null;
+    const date = (lessonSnap.get('startAt') as Timestamp).toDate().toISOString().slice(0, 10);
+    const reason = `Make-up for the lesson on ${date}`;
+    const key = `makeUp:${input.lessonId}:${input.studentId}`;
+
+    let lotId: string;
+    if (lotSnap?.exists && (lotSnap.get('status') === 'active' || lotSnap.get('status') === 'completed')) {
+      const given = (lotSnap.get('makeUpsGiven') as number | undefined) ?? 0;
+      if (typeof perPackage === 'number' && given >= perPackage) {
+        throw new HttpsError('failed-precondition', `This package already had ${given} make-up${given === 1 ? '' : 's'} (the limit is ${perPackage})`);
+      }
+      const lot = ct.useLot(lotSnap);
+      ct.adjust(lot, 1, reason, key);
+      ct.flush();
+      tx.update(lotSnap.ref, { makeUpsGiven: given + 1 });
+      lotId = lot.id;
+    } else {
+      const lotRef = school.collection('enrolments').doc();
+      ct.newLot(
+        lotRef,
+        {
+          studentId: input.studentId,
+          packageId: null,
+          packageName: 'Make-up credit',
+          invoiceId: null,
+          validFrom: Timestamp.fromDate(at),
+          validUntil: Timestamp.fromDate(new Date(at.getTime() + validityDays * DAY_MS)),
+        },
+        1,
+        { type: 'adjust', reason, idempotencyKey: `${key}:grant` },
+      );
+      ct.flush();
+      lotId = lotRef.id;
+    }
+    tx.update(attendeeRef, { makeUp: { grantedAt: now(), by: actor.uid, enrolmentId: lotId }, updatedAt: now() });
+    audit(tx, school, actor, 'grantMakeUp', `lessons/${input.lessonId}/attendees/${input.studentId}`, { lotId });
+    return { enrolmentId: lotId };
+  });
+}

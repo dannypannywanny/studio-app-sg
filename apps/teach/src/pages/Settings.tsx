@@ -242,6 +242,34 @@ function HolidaysForm({ raw, canEdit }: { raw: unknown; canEdit: boolean }) {
   );
 }
 
+function MakeUpsForm({ raw, canEdit }: { raw: unknown; canEdit: boolean }) {
+  const r = (raw ?? {}) as { perPackage?: number | null; validityDays?: number };
+  const [limit, setLimit] = useState(r.perPackage == null ? '' : String(r.perPackage));
+  const [days, setDays] = useState(r.validityDays ?? 30);
+  const s = useSaveSchool();
+  return (
+    <form
+      className="form-grid"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void s.save({ makeUps: { perPackage: limit === '' ? null : Math.max(0, Math.round(Number(limit))), validityDays: Math.max(1, Math.round(days)) } });
+      }}
+    >
+      <fieldset disabled={!canEdit} className="form-grid span-all fieldset-plain">
+        <label className="field">
+          <span>Make-ups per package (blank = no limit)</span>
+          <input type="number" min={0} max={50} value={limit} onChange={(e) => setLimit(e.target.value)} placeholder="No limit" />
+        </label>
+        <label className="field">
+          <span>Days to use a make-up credit (when the package has expired)</span>
+          <input type="number" min={1} max={365} value={days} onChange={(e) => setDays(Number(e.target.value))} />
+        </label>
+        <SaveRow {...s} disabled={!canEdit} />
+      </fieldset>
+    </form>
+  );
+}
+
 function TaxForm({ raw, canEdit }: { raw: unknown; canEdit: boolean }) {
   const [t, setT] = useState<TaxSettings>(resolveTax(raw));
   const s = useSaveSchool();
@@ -564,6 +592,9 @@ export function Settings() {
           <BookingHours />
         </Section>
       )}
+      <Section title="Make-up lessons" note={ownerNote ?? '“Give a make-up” on an absent or late-cancelled student returns the credit so they can book again.'}>
+        <MakeUpsForm raw={(data as { makeUps?: unknown }).makeUps} canEdit={isOwner} />
+      </Section>
       <Section title="Tax (GST)" note={ownerNote ?? 'Off unless your school is registered for GST or another sales tax.'}>
         <TaxForm raw={(data as { tax?: unknown }).tax} canEdit={isOwner} />
       </Section>

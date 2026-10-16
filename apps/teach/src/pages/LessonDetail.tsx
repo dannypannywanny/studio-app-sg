@@ -24,6 +24,7 @@ const cancelAttendance = call<AttendeeRef & { mode: CancelMode }, { status: stri
   'cancelAttendance',
 );
 const addAttendee = call<AttendeeRef, { added: boolean }>('addAttendee');
+const grantMakeUp = call<AttendeeRef, { enrolmentId: string }>('grantMakeUp');
 const removeAttendee = call<AttendeeRef, { charge: string }>('removeAttendee');
 const cancelLesson = call<{ schoolId: string; lessonId: string; reason: string | null }, { restored: number }>(
   'cancelLesson',
@@ -499,6 +500,7 @@ export function LessonPanel({
                     {studentName(s)}
                   </Link>
                   <span className={`badge badge-${a.status}`}>{STATUS_LABEL[a.status]}</span>
+                  {a.makeUp && <span className="badge badge-active">Make-up given</span>}
                   {a.owed ? (
                     <span className="badge badge-warn">Owed</span>
                   ) : a.ledgerEntryId ? (
@@ -551,6 +553,21 @@ export function LessonPanel({
                     >
                       Cancel…
                     </button>
+                    {(a.status === 'absent' || a.status === 'lateCancelled') && a.ledgerEntryId && !a.makeUp && (
+                      <button
+                        className="btn btn-sm"
+                        disabled={busy !== null}
+                        title="Give the credit back so they can book a make-up lesson"
+                        onClick={() =>
+                          run(`${a.studentId}:makeup`, async () => {
+                            await grantMakeUp({ schoolId, lessonId, studentId: a.studentId });
+                            return `${studentName(s)}: make-up given, 1 credit back.`;
+                          })
+                        }
+                      >
+                        {busy === `${a.studentId}:makeup` ? '…' : 'Give a make-up'}
+                      </button>
+                    )}
                     <button
                       className="btn btn-sm btn-ghost"
                       disabled={busy !== null || cancelled}
