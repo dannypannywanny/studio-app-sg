@@ -175,7 +175,17 @@ export async function handleHitPayWebhook(
   }
   const [schoolId, checkoutId] = String(payload.reference_number ?? '').split('.');
   if (!schoolId || !checkoutId || !keys[schoolId]) return 'unknown';
-  if (!validSignature(rawBody, signature, keys[schoolId]!.salt)) return 'badSignature';
+  if (!validSignature(rawBody, signature, keys[schoolId]!.salt)) {
+    // Keep the rejected message (server-only collection, no rules access) so a key mix-up can be diagnosed.
+    await schoolRef(db, schoolId).collection('webhookRejects').add({
+      provider: 'hitpay',
+      raw: rawBody.toString('utf8').slice(0, 20000),
+      signature: signature ?? null,
+      at: Timestamp.fromDate(at),
+      expireAt: Timestamp.fromMillis(at.getTime() + 7 * 86_400_000),
+    });
+    return 'badSignature';
+  }
   const school = schoolRef(db, schoolId);
   const ref = school.collection('checkouts').doc(checkoutId);
   if (payload.status !== 'completed') {
