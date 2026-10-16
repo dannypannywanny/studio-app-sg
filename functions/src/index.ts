@@ -177,6 +177,12 @@ export const setAttendeePackage = onCall(async (req) => {
   return attendance.setAttendeePackage(db(), input, actor);
 });
 
+export const setLessonNote = onCall(async (req) => {
+  const input = parse(Attendee.extend({ note: z.string().max(4000).nullable() }), req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin', 'teacher']);
+  return attendance.setLessonNote(db(), input, actor);
+});
+
 export const removeAttendee = onCall(async (req) => {
   const input = parse(Attendee, req.data);
   const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);

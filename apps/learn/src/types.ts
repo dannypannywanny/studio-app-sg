@@ -48,6 +48,7 @@ export interface Attendee {
   owed: boolean;
   lessonStartAt: Ts;
   source?: string;
+  sharedNote?: string | null;
 }
 
 export interface Enrolment {

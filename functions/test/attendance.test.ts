@@ -7,6 +7,7 @@ import {
   removeAttendee,
   setAttendance,
   setAttendeePackage,
+  setLessonNote,
   type CancelMode,
   type MarkableStatus,
 } from '../src/attendance';
@@ -250,5 +251,19 @@ describe('choosing the package for a lesson', () => {
     await mark(t, id, 'present');
     expect((await attendee(t, id)).enrolmentId).toBe(soon.enrolmentId);
     await expect(choose(t, id, soon.enrolmentId)).rejects.toThrow(/Unmark it first/);
+  });
+});
+
+describe('lesson notes for the student', () => {
+  it('staff write a note on the attendee; a teacher only on their own lessons', async () => {
+    const t = await school();
+    const id = await lesson(t);
+    await setLessonNote(db, { schoolId: t.schoolId, lessonId: id, studentId: t.studentId, note: '  Breath support, practise scale 3  ' }, owner);
+    expect((await attendee(t, id)).sharedNote).toBe('Breath support, practise scale 3');
+    const other = { uid: 'teacher-x', role: 'teacher' as const, teacherId: 'someone-else' };
+    await expect(setLessonNote(db, { schoolId: t.schoolId, lessonId: id, studentId: t.studentId, note: 'x' }, other)).rejects.toThrow(/own lessons/);
+    const mine = { uid: 'teacher-1', role: 'teacher' as const, teacherId: t.teacherId };
+    await setLessonNote(db, { schoolId: t.schoolId, lessonId: id, studentId: t.studentId, note: null }, mine);
+    expect((await attendee(t, id)).sharedNote).toBeNull();
   });
 });

@@ -551,3 +551,28 @@ export async function cancelLesson(
     return { restored, alreadyCancelled: false };
   });
 }
+
+/**
+ * A note for one student about one lesson (what was covered, homework), shown to that student in the
+ * learn portal. Owners/admins for any lesson; a teacher only for their own lessons.
+ */
+export async function setLessonNote(
+  db: Firestore,
+  input: AttendeeInput & { note: string | null },
+  actor: Actor,
+): Promise<{ ok: true }> {
+  const school = schoolRef(db, input.schoolId);
+  const lessonRef = school.collection('lessons').doc(input.lessonId);
+  return db.runTransaction(async (tx) => {
+    const [lessonSnap, attendeeSnap] = await readAll(tx, lessonRef, lessonRef.collection('attendees').doc(input.studentId));
+    if (!lessonSnap.exists) notFound('Lesson');
+    if (!attendeeSnap.exists) notFound('Student on this lesson');
+    if (actor.role === 'teacher' && lessonSnap.get('teacherId') !== actor.teacherId) {
+      throw new HttpsError('permission-denied', 'You can only write notes on your own lessons');
+    }
+    const note = input.note?.trim().slice(0, 4000) || null;
+    tx.update(attendeeSnap.ref, { sharedNote: note, sharedNoteAt: note ? now() : null, sharedNoteBy: note ? actor.uid : null, updatedAt: now() });
+    audit(tx, school, actor, 'setLessonNote', `lessons/${input.lessonId}/attendees/${input.studentId}`, { length: note?.length ?? 0 });
+    return { ok: true as const };
+  });
+}

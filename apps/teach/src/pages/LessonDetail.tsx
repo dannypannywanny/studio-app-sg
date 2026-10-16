@@ -201,6 +201,62 @@ function Reschedule({ lesson, onDone }: { lesson: Lesson & { id: string }; onDon
   );
 }
 
+const setLessonNote = call<{ schoolId: string; lessonId: string; studentId: string; note: string | null }, { ok: true }>('setLessonNote');
+
+/** Note for this student about this lesson; they see it in the student portal. */
+function SharedNote({ lessonId, studentId, note }: { lessonId: string; studentId: string; note: string }) {
+  const schoolId = useSchoolId();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState(note);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!open) {
+    return note ? (
+      <button className="shared-note" onClick={() => setOpen(true)} title="Edit lesson note">
+        <span className="shared-note-label">Lesson note (student sees this)</span>
+        {note}
+      </button>
+    ) : (
+      <button className="link-add" onClick={() => setOpen(true)}>
+        + Lesson note for the student
+      </button>
+    );
+  }
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      await setLessonNote({ schoolId, lessonId, studentId, note: text.trim() || null });
+      setOpen(false);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="stack shared-note-edit">
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={3}
+        maxLength={4000}
+        placeholder="What you covered, what to practise. The student sees this in their portal."
+        aria-label="Lesson note for the student"
+      />
+      <div className="row">
+        <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => void save()}>
+          {busy ? 'Saving…' : 'Save note'}
+        </button>
+        <button className="btn btn-sm btn-ghost" onClick={() => setOpen(false)}>
+          Cancel
+        </button>
+        {error && <span className="error">{error}</span>}
+      </div>
+    </div>
+  );
+}
+
 const CHARGE_TEXT: Record<string, string> = {
   debited: '1 credit used.',
   owed: 'No credits left: recorded as owed.',
@@ -453,6 +509,7 @@ export function LessonPanel({
                   </span>
                 </div>
                 {s?.notes && <p className="staff-note att-notes">{s.notes}</p>}
+                <SharedNote lessonId={lessonId} studentId={a.studentId} note={a.sharedNote ?? ''} />
                 {!cancelled && !a.ledgerEntryId && (a.status === 'booked' || a.status === 'present' || a.status === 'absent') && (
                   <PackageSelect
                     studentId={a.studentId}

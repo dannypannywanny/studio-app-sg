@@ -178,6 +178,7 @@ export function HistoryRow({ item, ctx }: { item: MyLesson; ctx: LessonContext }
         {item.attendee?.owed && <span className="tag tag-warn">To pay</span>}
         <span className={`tag tag-${label.tone}`}>{label.text}</span>
       </span>
+      {item.attendee?.sharedNote && <p className="hist-note">{item.attendee.sharedNote}</p>}
     </li>
   );
 }
