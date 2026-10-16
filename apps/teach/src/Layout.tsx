@@ -39,11 +39,17 @@ export function Layout() {
             Today
           </NavLink>
           <NavLink to="/calendar">Calendar</NavLink>
-          <NavLink to="/students">Students</NavLink>
-          <NavLink to="/lessons">Lessons</NavLink>
-          <NavLink to="/invoices">Invoices</NavLink>
-          <NavLink to="/packages">Packages</NavLink>
-          <NavLink to="/reports">Reports</NavLink>
+          {role === 'teacher' ? (
+            <NavLink to="/my-pay">My pay</NavLink>
+          ) : (
+            <>
+              <NavLink to="/students">Students</NavLink>
+              <NavLink to="/lessons">Lessons</NavLink>
+              <NavLink to="/invoices">Invoices</NavLink>
+              <NavLink to="/packages">Packages</NavLink>
+              <NavLink to="/reports">Reports</NavLink>
+            </>
+          )}
           {isStaff && <NavLink to="/staff">Staff</NavLink>}
           {isStaff && <NavLink to="/settings">Settings</NavLink>}
         </nav>

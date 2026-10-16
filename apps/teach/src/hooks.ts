@@ -1,8 +1,8 @@
 import { collection, doc, onSnapshot, query, type DocumentData, type Query } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
 import { formatDateTime } from '@lessonkaki/shared';
-import { db } from './firebase';
-import { useSchoolId } from './session';
+import { call, db } from './firebase';
+import { useSchoolId, useSession } from './session';
 import type { School, Student, Teacher, Ts } from './types';
 
 export type WithId<T> = T & { id: string };
@@ -68,18 +68,50 @@ export function useFormatTs() {
   return (t: Ts | null | undefined) => (t ? formatDateTime(t.toDate(), tz) : '—');
 }
 
+const teacherRosterCall = call<{ schoolId: string }, { students: WithId<Student>[] }>('teacherRoster');
+let rosterCache: { schoolId: string; at: number; data: WithId<Student>[] } | null = null;
+
+/** Teachers can't read student records; they get names and notes for their own students from the server. */
+function useTeacherRoster(schoolId: string, enabled: boolean): Live<WithId<Student>[]> {
+  const fresh = rosterCache && rosterCache.schoolId === schoolId && Date.now() - rosterCache.at < 5 * 60_000;
+  const [state, setState] = useState<Live<WithId<Student>[]>>({ data: fresh ? rosterCache!.data : [], loading: enabled && !fresh, error: null });
+  useEffect(() => {
+    if (!enabled || fresh) return;
+    let live = true;
+    teacherRosterCall({ schoolId })
+      .then((r) => {
+        rosterCache = { schoolId, at: Date.now(), data: r.students };
+        if (live) setState({ data: r.students, loading: false, error: null });
+      })
+      .catch((error: Error) => live && setState({ data: [], loading: false, error }));
+    return () => {
+      live = false;
+    };
+  }, [schoolId, enabled]); // eslint-disable-line react-hooks/exhaustive-deps
+  return state;
+}
+
 export function useStudents() {
   const schoolId = useSchoolId();
-  const live = useQuery<Student>(`students:${schoolId}`, () => query(collection(db, 'schools', schoolId, 'students')));
-  const byId = useMemo(() => new Map(live.data.map((s) => [s.id, s])), [live.data]);
-  return { ...live, byId };
+  const { role } = useSession();
+  const isTeacher = role === 'teacher';
+  const live = useQuery<Student>(isTeacher ? null : `students:${schoolId}`, () => query(collection(db, 'schools', schoolId, 'students')));
+  const roster = useTeacherRoster(schoolId, isTeacher);
+  const source = isTeacher ? roster : live;
+  const byId = useMemo(() => new Map(source.data.map((s) => [s.id, s])), [source.data]);
+  return { ...source, byId };
 }
 
 export function useTeachers() {
   const schoolId = useSchoolId();
-  const live = useQuery<Teacher>(`teachers:${schoolId}`, () => query(collection(db, 'schools', schoolId, 'teachers')));
-  const byId = useMemo(() => new Map(live.data.map((t) => [t.id, t])), [live.data]);
-  return { ...live, byId };
+  const { role, teacherId } = useSession();
+  const isTeacher = role === 'teacher';
+  const live = useQuery<Teacher>(isTeacher ? null : `teachers:${schoolId}`, () => query(collection(db, 'schools', schoolId, 'teachers')));
+  // A teacher may read only their own teacher doc.
+  const own = useDoc<Teacher>(isTeacher && teacherId ? `schools/${schoolId}/teachers/${teacherId}` : null);
+  const data = useMemo(() => (isTeacher ? (own.data ? [own.data] : []) : live.data), [isTeacher, own.data, live.data]);
+  const byId = useMemo(() => new Map(data.map((t) => [t.id, t])), [data]);
+  return { data, loading: isTeacher ? own.loading : live.loading, error: isTeacher ? own.error : live.error, byId };
 }
 
 export function studentName(s: Pick<Student, 'firstName' | 'lastName' | 'preferredName'> | undefined): string {

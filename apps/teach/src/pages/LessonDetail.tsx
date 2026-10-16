@@ -10,7 +10,7 @@ import { PackageSelect, setAttendeePackage } from '../components/PackagePick';
 import { useSubjects } from '../components/LessonTypes';
 import { call, db } from '../firebase';
 import { studentName, useDoc, useFormatTs, useQuery, useSchool, useStudents, useTeachers, useTimeZone } from '../hooks';
-import { useSchoolId } from '../session';
+import { useSchoolId, useSession } from '../session';
 import type { Attendee, Lesson } from '../types';
 
 type Markable = 'present' | 'absent' | 'booked';
@@ -344,6 +344,8 @@ export function LessonPanel({
 }) {
   const schoolId = useSchoolId();
   const fmt = useFormatTs();
+  // Teachers mark attendance and write notes; scheduling, students and credits are for owners/admins.
+  const isStaff = useSession().role !== 'teacher';
   const lesson = useDoc<Lesson>(`schools/${schoolId}/lessons/${lessonId}`);
   const attendees = useQuery<Attendee>(`attendees:${lessonId}`, () =>
     query(collection(db, 'schools', schoolId, 'lessons', lessonId, 'attendees')),
@@ -441,12 +443,12 @@ export function LessonPanel({
           <span className="badge badge-void">Cancelled{l.cancelReason ? `: ${l.cancelReason}` : ''}</span>
         ) : (
           <div className="row">
-            {!rescheduling && (
+            {!rescheduling && isStaff && (
               <button className="btn" onClick={() => setRescheduling(true)}>
                 Reschedule
               </button>
             )}
-            {!confirmCancelLesson && (
+            {!confirmCancelLesson && isStaff && (
               <button className="btn" onClick={() => setConfirmCancelLesson(true)}>
                 Cancel lesson
               </button>
@@ -496,9 +498,13 @@ export function LessonPanel({
             return (
               <li key={a.id} className="att">
                 <div className="att-head">
-                  <Link className="att-name" to={`/students/${a.studentId}`}>
-                    {studentName(s)}
-                  </Link>
+                  {isStaff ? (
+                    <Link className="att-name" to={`/students/${a.studentId}`}>
+                      {studentName(s)}
+                    </Link>
+                  ) : (
+                    <span className="att-name">{studentName(s)}</span>
+                  )}
                   <span className={`badge badge-${a.status}`}>{STATUS_LABEL[a.status]}</span>
                   {a.makeUp && <span className="badge badge-active">Make-up given</span>}
                   {a.owed ? (
@@ -506,13 +512,15 @@ export function LessonPanel({
                   ) : a.ledgerEntryId ? (
                     <span className="muted att-note">Used 1 credit</span>
                   ) : null}
-                  <span className="muted att-note att-left" data-testid={`balance-${a.studentId}`}>
-                    {s?.summary?.sessionsAvailable ?? 0} credits left
-                  </span>
+                  {isStaff && (
+                    <span className="muted att-note att-left" data-testid={`balance-${a.studentId}`}>
+                      {s?.summary?.sessionsAvailable ?? 0} credits left
+                    </span>
+                  )}
                 </div>
                 {s?.notes && <p className="staff-note att-notes">{s.notes}</p>}
                 <SharedNote lessonId={lessonId} studentId={a.studentId} note={a.sharedNote ?? ''} />
-                {!cancelled && !a.ledgerEntryId && (a.status === 'booked' || a.status === 'present' || a.status === 'absent') && (
+                {isStaff && !cancelled && !a.ledgerEntryId && (a.status === 'booked' || a.status === 'present' || a.status === 'absent') && (
                   <PackageSelect
                     studentId={a.studentId}
                     value={a.preferredEnrolmentId ?? null}
@@ -553,7 +561,7 @@ export function LessonPanel({
                     >
                       Cancel…
                     </button>
-                    {(a.status === 'absent' || a.status === 'lateCancelled') && a.ledgerEntryId && !a.makeUp && (
+                    {isStaff && (a.status === 'absent' || a.status === 'lateCancelled') && a.ledgerEntryId && !a.makeUp && (
                       <button
                         className="btn btn-sm"
                         disabled={busy !== null}
@@ -568,14 +576,14 @@ export function LessonPanel({
                         {busy === `${a.studentId}:makeup` ? '…' : 'Give a make-up'}
                       </button>
                     )}
-                    <button
+                    {isStaff && <button
                       className="btn btn-sm btn-ghost"
                       disabled={busy !== null || cancelled}
                       onClick={() => remove(a.studentId)}
                       title="Take this student off the lesson"
                     >
                       {busy === `${a.studentId}:remove` ? '…' : 'Remove'}
-                    </button>
+                    </button>}
                   </div>
                 )}
               </li>
@@ -583,7 +591,7 @@ export function LessonPanel({
           })}
         </ul>
         {visible.length === 0 && <p className="empty">No students on this lesson.</p>}
-        {!cancelled && (
+        {!cancelled && isStaff && (
           <StudentSearch
             label="Add a student"
             placeholder={busy === 'add' ? 'Adding…' : 'Add a student: search by name, email or phone'}

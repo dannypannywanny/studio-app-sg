@@ -4,7 +4,7 @@ import { collection, query, Timestamp, where } from 'firebase/firestore';
 import { addDays, wallClockToUtc, wallTimeOf } from '@lessonkaki/shared';
 import { db } from '../firebase';
 import { studentName, useQuery, useStudents, useTimeZone } from '../hooks';
-import { useSchoolId } from '../session';
+import { useSchoolId, useSession } from '../session';
 import type { Lesson } from '../types';
 import { useRooms } from './Rooms';
 import { useHolidays } from './Holidays';
@@ -37,10 +37,13 @@ export function ConflictBanner({
   const dayEnd = valid ? wallClockToUtc(addDays(date, 1), '00:00', tz) : new Date(0);
   const places = useRooms();
   const holidays = useHolidays();
+  const { role } = useSession();
+  const isTeacher = role === 'teacher';
   // The whole day's lessons (any teacher), filtered below by this teacher or this room.
-  const lessons = useQuery<Lesson>(valid ? `conflicts:${schoolId}:${date}` : null, () =>
+  const lessons = useQuery<Lesson>(valid ? `conflicts:${schoolId}:${date}:${isTeacher ? teacherId : 'all'}` : null, () =>
     query(
       collection(db, 'schools', schoolId, 'lessons'),
+      ...(isTeacher ? [where('teacherId', '==', teacherId)] : []),
       where('startAt', '>=', Timestamp.fromDate(dayStart)),
       where('startAt', '<', Timestamp.fromDate(dayEnd)),
     ),

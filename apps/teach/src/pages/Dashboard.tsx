@@ -4,7 +4,7 @@ import { Link } from 'react-router';
 import { addDays, formatDate, formatMoney, isOverdue, wallClockToUtc, wallDateOf, wallTimeOf } from '@lessonkaki/shared';
 import { db } from '../firebase';
 import { studentName, useQuery, useStudents, useTeachers, useTimeZone } from '../hooks';
-import { useSchoolId } from '../session';
+import { useSchoolId, useSession } from '../session';
 import type { Invoice, Lesson } from '../types';
 import { invoiceBadge } from './Invoices';
 import { useLessonHref } from '../components/LessonSheet';
@@ -17,19 +17,22 @@ export function Dashboard() {
   const students = useStudents();
   const teachers = useTeachers();
   const lessonHref = useLessonHref();
+  const { role, teacherId } = useSession();
+  const isTeacher = role === 'teacher';
   const today = wallDateOf(new Date(), tz);
   const from = wallClockToUtc(today, '00:00', tz);
   const to = wallClockToUtc(addDays(today, 1), '00:00', tz);
 
-  const lessons = useQuery<Lesson>(`today:${schoolId}:${today}`, () =>
+  const lessons = useQuery<Lesson>(`today:${schoolId}:${today}:${isTeacher ? teacherId : 'all'}`, () =>
     query(
       collection(db, 'schools', schoolId, 'lessons'),
+      ...(isTeacher ? [where('teacherId', '==', teacherId ?? '-')] : []),
       where('startAt', '>=', Timestamp.fromDate(from)),
       where('startAt', '<', Timestamp.fromDate(to)),
       orderBy('startAt'),
     ),
   );
-  const open = useQuery<Invoice>(`openInvoices:${schoolId}`, () =>
+  const open = useQuery<Invoice>(isTeacher ? null : `openInvoices:${schoolId}`, () =>
     query(collection(db, 'schools', schoolId, 'invoices'), where('status', 'in', ['sent', 'partial'])),
   );
 
@@ -64,6 +67,8 @@ export function Dashboard() {
           <span className="tile-label">To mark</span>
           <span className={`tile-value ${toMark ? 'warn' : ''}`}>{toMark}</span>
         </div>
+        {!isTeacher && (
+        <>
         <Link className="tile tile-link" to="/invoices?filter=outstanding">
           <span className="tile-label">Outstanding</span>
           <span className="tile-value" data-testid="outstanding-total">{formatMoney(outstanding)}</span>
@@ -76,6 +81,8 @@ export function Dashboard() {
           <span className="tile-label">Lessons owed</span>
           <span className={`tile-value ${owedLessons ? 'warn' : ''}`} data-testid="owed-total">{owedLessons}</span>
         </div>
+        </>
+        )}
       </div>
 
       <div className="card stack">
@@ -109,6 +116,7 @@ export function Dashboard() {
         )}
       </div>
 
+      {!isTeacher && (
       <div className="split">
         <div className="card stack">
           <h2>Overdue invoices</h2>
@@ -158,6 +166,7 @@ export function Dashboard() {
           )}
         </div>
       </div>
+      )}
     </section>
   );
 }

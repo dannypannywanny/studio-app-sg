@@ -70,7 +70,8 @@ function readPref(key: string) {
 
 export function Calendar() {
   const schoolId = useSchoolId();
-  const { user } = useSession();
+  const { user, role, teacherId: myTeacherId } = useSession();
+  const isTeacher = role === 'teacher';
   const tz = useTimeZone();
   const today = wallDateOf(new Date(), tz);
   const prefKey = `lk.calendarView.${user?.uid ?? 'anon'}`;
@@ -113,9 +114,11 @@ export function Calendar() {
   const range = rangeOf(view, date);
   const from = wallClockToUtc(range.from, '00:00', tz);
   const to = wallClockToUtc(range.to, '00:00', tz);
-  const lessons = useQuery<Lesson>(`calendar:${schoolId}:${range.from}:${range.to}`, () =>
+  const lessons = useQuery<Lesson>(`calendar:${schoolId}:${range.from}:${range.to}:${isTeacher ? myTeacherId : 'all'}`, () =>
     query(
       collection(db, 'schools', schoolId, 'lessons'),
+      // Teachers may only read their own lessons, so the query has to say so.
+      ...(isTeacher ? [where('teacherId', '==', myTeacherId ?? '-')] : []),
       where('startAt', '>=', Timestamp.fromDate(from)),
       where('startAt', '<', Timestamp.fromDate(to)),
       orderBy('startAt'),
@@ -151,14 +154,14 @@ export function Calendar() {
               </button>
             ))}
           </div>
-          <select value={teacherFilter} onChange={(e) => setTeacherFilter(e.target.value)} aria-label="Teacher">
+          {!isTeacher && <select value={teacherFilter} onChange={(e) => setTeacherFilter(e.target.value)} aria-label="Teacher">
             <option value="">All teachers</option>
             {teachers.data.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.displayName}
               </option>
             ))}
-          </select>
+          </select>}
           {places.many && (
             <select value={roomFilter} onChange={(e) => setRoomFilter(e.target.value)} aria-label="Room">
               <option value="">All rooms</option>
@@ -192,7 +195,7 @@ export function Calendar() {
               Block time
             </button>
           )}
-          {adding === null && (
+          {adding === null && !isTeacher && (
             <button
               className="btn btn-primary"
               onClick={() => {

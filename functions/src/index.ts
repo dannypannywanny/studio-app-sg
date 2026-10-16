@@ -18,6 +18,7 @@ import * as booking from './booking';
 import * as checkout from './checkout';
 import * as holidays from './holidays';
 import * as reminders from './reminders';
+import * as teachers from './teachers';
 import * as credits from './credits';
 import * as lessons from './lessons';
 import * as invoicePdf from './invoicePdf';
@@ -542,4 +543,16 @@ export const sendPaymentReminders = onSchedule({ ...JOB, schedule: 'every day 10
   if (!key) return console.warn('sendPaymentReminders: no RESEND_API_KEY');
   const res = await reminders.runPaymentReminders(db(), alerts.resendSender(key), DEFAULT_ALERT_FROM);
   console.log(`sendPaymentReminders: ${res.sent} sent`);
+});
+
+export const teacherRoster = onCall(async (req) => {
+  const input = parse(z.object({ schoolId: id }), req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['teacher']);
+  return teachers.teacherRoster(db(), input, actor);
+});
+
+export const teacherPay = onCall(async (req) => {
+  const input = parse(z.object({ schoolId: id, from: z.string().datetime(), to: z.string().datetime(), teacherId: id.nullish() }), req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin', 'teacher']);
+  return teachers.teacherPay(db(), input, actor);
 });

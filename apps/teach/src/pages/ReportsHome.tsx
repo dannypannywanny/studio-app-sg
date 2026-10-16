@@ -8,6 +8,7 @@ import { useQuery, useTeachers, useTimeZone } from '../hooks';
 import { useSchoolId } from '../session';
 import type { Invoice, Lesson, Payment } from '../types';
 import { AttendanceReport } from './Reports';
+import { PayTable } from './MyPay';
 
 const TABS = [
   ['attendance', 'Attendance'],
@@ -194,6 +195,8 @@ function TeachersReport() {
         </tbody>
       </table>
       {rows.length === 0 && <p className="empty">No lessons in this period.</p>}
+      <h2>Teacher pay</h2>
+      <PayTable />
     </div>
   );
 }

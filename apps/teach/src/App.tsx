@@ -7,6 +7,7 @@ import { Dashboard } from './pages/Dashboard';
 import { ImportStudents } from './pages/ImportStudents';
 import { Packages } from './pages/Packages';
 import { Reports } from './pages/ReportsHome';
+import { MyPay } from './pages/MyPay';
 import { Settings } from './pages/Settings';
 import { Staff } from './pages/Staff';
 import { InvoiceDetail } from './pages/InvoiceDetail';
@@ -41,6 +42,8 @@ function RequireStaff({ children }: { children: ReactNode }) {
   }
   // Rules and functions refuse staff without a second factor, so set it up before loading anything.
   if (role && roleNeedsMfa(role) && !secondFactor) return <TwoStepSetup user={user} />;
+  // Teacher logins: their own day, calendar, lessons and pay only.
+  if (role === 'teacher' && !/^\/($|calendar|lessons\/|my-pay)/.test(location.pathname)) return <Navigate to="/" replace />;
   return children;
 }
 
@@ -59,6 +62,7 @@ export function App() {
             }
           >
             <Route index element={<Dashboard />} />
+            <Route path="my-pay" element={<MyPay />} />
             <Route path="calendar" element={<Calendar />} />
             <Route path="students" element={<Students />} />
             <Route path="students/import" element={<ImportStudents />} />
