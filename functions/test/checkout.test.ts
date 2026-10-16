@@ -100,6 +100,11 @@ describe('hitpayWebhook', () => {
     expect(await handleHitPayWebhook(db, keys, b, undefined, NOW)).toBe('badSignature');
     const pending = body({ id: 'req-1', status: 'pending', amount: '300.00', reference_number: `${t.schoolId}.${checkoutId}` });
     expect(await handleHitPayWebhook(db, keys, pending, sign(pending), NOW)).toBe('ignored');
+    const failed = body({ id: 'req-1', status: 'failed', amount: '300.00', reference_number: `${t.schoolId}.${checkoutId}` });
+    expect(await handleHitPayWebhook(db, keys, failed, sign(failed), NOW)).toBe('failed');
+    expect((await db.doc(`schools/${t.schoolId}/checkouts/${checkoutId}`).get()).get('status')).toBe('failed');
+    // A later successful payment for the same checkout still goes through.
+    await db.doc(`schools/${t.schoolId}/checkouts/${checkoutId}`).update({ status: 'pending' });
     const cheap = completed(t, checkoutId, '3.00');
     expect(await handleHitPayWebhook(db, keys, cheap, sign(cheap), NOW)).toBe('ignored');
     expect(await summary(t)).toEqual({ sessionsAvailable: 0, sessionsOwed: 0 });

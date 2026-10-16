@@ -150,7 +150,7 @@ export function validSignature(rawBody: Buffer, signature: string | undefined, s
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
 
-export type WebhookOutcome = 'paid' | 'duplicate' | 'ignored' | 'badSignature' | 'unknown';
+export type WebhookOutcome = 'paid' | 'failed' | 'duplicate' | 'ignored' | 'badSignature' | 'unknown';
 
 interface WebhookPayload {
   id?: string;
@@ -176,10 +176,17 @@ export async function handleHitPayWebhook(
   const [schoolId, checkoutId] = String(payload.reference_number ?? '').split('.');
   if (!schoolId || !checkoutId || !keys[schoolId]) return 'unknown';
   if (!validSignature(rawBody, signature, keys[schoolId]!.salt)) return 'badSignature';
-  if (payload.status !== 'completed') return 'ignored';
-
   const school = schoolRef(db, schoolId);
   const ref = school.collection('checkouts').doc(checkoutId);
+  if (payload.status !== 'completed') {
+    // A failed attempt: note it so the studio can follow up. Nothing is sold; the student can retry.
+    if (payload.status !== 'failed') return 'ignored';
+    const pending = await ref.get();
+    if (!pending.exists || pending.get('status') !== 'pending') return 'ignored';
+    await ref.update({ status: 'failed', failedAt: Timestamp.fromDate(at), updatedAt: now() });
+    return 'failed';
+  }
+
   const snap = await ref.get();
   if (!snap.exists) return 'unknown';
   if (snap.get('status') === 'paid') return 'duplicate';
