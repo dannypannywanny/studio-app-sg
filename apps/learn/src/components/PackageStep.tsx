@@ -183,7 +183,7 @@ export function PackageStep({
           </ul>
         )}
         {error && <p className="form-error" role="alert">{error}</p>}
-        <p className="meta">Pay by card or PayNow on HitPay. Your sessions are added as soon as the payment goes through.</p>
+        <p className="meta">Pay online with HitPay (card, PayNow, GrabPay, ShopeePay and more). Your sessions are added as soon as the payment goes through.</p>
         {trial}
       </section>
 

@@ -1,4 +1,4 @@
-// Buying a package online with HitPay (card or PayNow), before booking.
+// Buying a package online with HitPay (whatever methods the school enabled there), before booking.
 //
 // startCheckout makes a checkouts/{id} doc and a HitPay payment request for the package price, and
 // returns HitPay's checkout URL. HitPay sends the student back to the learn site, and separately
@@ -59,8 +59,8 @@ export function hitpayClient(keys: HitPayKeys, fetchFn: typeof fetch = fetch): H
         reference_number: r.referenceNumber,
         redirect_url: r.redirectUrl,
       });
-      body.append('payment_methods[]', 'paynow_online');
-      body.append('payment_methods[]', 'card');
+      // No payment_methods[]: HitPay then offers every method the school has switched on in its dashboard
+      // (card, PayNow, GrabPay, ShopeePay, Atome, ...).
       const res = await fetchFn(HITPAY_URL[keys.mode ?? 'live'], {
         method: 'POST',
         headers: { 'X-BUSINESS-API-KEY': keys.apiKey, 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },

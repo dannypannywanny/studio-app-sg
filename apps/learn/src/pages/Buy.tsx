@@ -74,7 +74,7 @@ export function Buy() {
           )}
           <li>
             <Check size={18} weight="bold" aria-hidden="true" />
-            Pay by card or PayNow on HitPay
+            Pay online with HitPay: card, PayNow, GrabPay, ShopeePay and more
           </li>
         </ul>
         <button className="btn btn-block" onClick={pay} disabled={busy}>
