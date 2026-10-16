@@ -48,6 +48,8 @@ export interface InvoicePdfData {
     subtotalCents: number;
     discountCents: number;
     creditedCents?: number;
+    taxCents?: number;
+    tax?: { rate: number; label: string; inclusive: boolean; regNo: string | null } | null;
     totalCents: number;
     paidCents: number;
     pendingCents: number;
@@ -246,6 +248,7 @@ export async function renderInvoicePdf(d: InvoicePdfData, assets: PdfAssets = {}
   const fromLines = [
     d.school.legalName && d.school.legalName !== d.school.name ? d.school.legalName : null,
     d.school.uen ? `UEN ${d.school.uen}` : null,
+    d.invoice.tax?.regNo ? `${d.invoice.tax.label} Reg. No. ${d.invoice.tax.regNo}` : null,
     ...(d.school.address ? wrap(d.school.address, W - M - half, 9) : []),
     d.school.email,
   ].filter(Boolean) as string[];
@@ -278,8 +281,10 @@ export async function renderInvoicePdf(d: InvoicePdfData, assets: PdfAssets = {}
   const tx = W - M - 230;
   const rows: [string, string][] = [['Subtotal', money(d.invoice.subtotalCents)]];
   if (d.invoice.discountCents) rows.push(['Discount', `-${money(d.invoice.discountCents)}`]);
+  if (d.invoice.tax && d.invoice.taxCents && !d.invoice.tax.inclusive) rows.push([`${d.invoice.tax.label} ${d.invoice.tax.rate}%`, money(d.invoice.taxCents)]);
   if (d.invoice.creditedCents) rows.push(['Credit note', `-${money(d.invoice.creditedCents)}`]);
   rows.push(['Total', money(d.invoice.totalCents)]);
+  if (d.invoice.tax?.inclusive && d.invoice.taxCents) rows.push([`Incl. ${d.invoice.tax.label} ${d.invoice.tax.rate}%`, money(d.invoice.taxCents)]);
   if (d.invoice.paidCents) rows.push(['Paid', `-${money(d.invoice.paidCents)}`]);
   y -= 6;
   for (const [label, value] of rows) {
@@ -428,6 +433,8 @@ export async function loadInvoicePdfData(db: Firestore, schoolId: string, invoic
       subtotalCents: inv.subtotalCents ?? inv.totalCents,
       discountCents: inv.discountCents ?? 0,
       creditedCents: inv.creditedCents ?? 0,
+      taxCents: inv.taxCents ?? 0,
+      tax: inv.tax ?? null,
       totalCents: inv.totalCents,
       paidCents: inv.paidCents ?? 0,
       pendingCents: pending,

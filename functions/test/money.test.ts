@@ -200,3 +200,32 @@ describe('issueCreditNote', () => {
     expect(await money(t)).toMatchObject({ outstandingCents: 0, moneyCreditCents: 0 });
   });
 });
+
+describe('tax (GST)', () => {
+  const inv = async (t: TestSchool, id: string) => (await db.doc(`schools/${t.schoolId}/invoices/${id}`).get()).data()!;
+
+  it('exclusive: added on top after the discount, kept at the invoice rate on later edits', async () => {
+    const t = await school();
+    await db.doc(`schools/${t.schoolId}`).update({ tax: { enabled: true, rate: 9, label: 'GST', regNo: 'M9-1234567-8' } });
+    const sale = await sell(t, t.pkg30); // 30000
+    expect(await inv(t, sale.invoiceId)).toMatchObject({ taxCents: 2700, totalCents: 32700, pendingCents: 32700, tax: { rate: 9, label: 'GST', inclusive: false, regNo: 'M9-1234567-8' } });
+    expect((await money(t)).outstandingCents).toBe(32700);
+    await db.doc(`schools/${t.schoolId}`).update({ 'tax.rate': 10 }); // later change: old invoice unaffected
+    await editInvoice(db, { schoolId: t.schoolId, invoiceId: sale.invoiceId, discount: { kind: 'amount', value: 10000 } }, owner);
+    expect(await inv(t, sale.invoiceId)).toMatchObject({ taxCents: 1800, totalCents: 21800 });
+    expect((await money(t)).outstandingCents).toBe(21800);
+  });
+
+  it('inclusive: total unchanged, tax portion shown', async () => {
+    const t = await school();
+    await db.doc(`schools/${t.schoolId}`).update({ tax: { enabled: true, rate: 9, inclusive: true } });
+    const sale = await sell(t, t.pkg30);
+    expect(await inv(t, sale.invoiceId)).toMatchObject({ taxCents: 2477, totalCents: 30000 });
+  });
+
+  it('off by default: no tax', async () => {
+    const t = await school();
+    const sale = await sell(t, t.pkg30);
+    expect(await inv(t, sale.invoiceId)).toMatchObject({ taxCents: 0, totalCents: 30000, tax: null });
+  });
+});

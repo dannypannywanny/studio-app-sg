@@ -134,8 +134,22 @@ export function InvoiceDetail() {
               <dd className="num">-{formatMoney(inv.discountCents, inv.currency)}</dd>
             </div>
           )}
+          {inv.tax && !inv.tax.inclusive && (inv.taxCents ?? 0) > 0 && (
+            <div>
+              <dt>
+                {inv.tax.label} {inv.tax.rate}%
+              </dt>
+              <dd className="num">{formatMoney(inv.taxCents ?? 0, inv.currency)}</dd>
+            </div>
+          )}
+          {(inv.creditedCents ?? 0) > 0 && (
+            <div>
+              <dt>Credit note</dt>
+              <dd className="num">-{formatMoney(inv.creditedCents ?? 0, inv.currency)}</dd>
+            </div>
+          )}
           <div>
-            <dt>Total</dt>
+            <dt>Total{inv.tax?.inclusive && (inv.taxCents ?? 0) > 0 ? ` (incl. ${inv.tax.label} ${formatMoney(inv.taxCents ?? 0, inv.currency)})` : ''}</dt>
             <dd className="num">{formatMoney(inv.totalCents, inv.currency)}</dd>
           </div>
           {inv.paidCents > 0 && (

@@ -2,11 +2,11 @@ import { collection, doc, query, serverTimestamp, updateDoc, where } from 'fireb
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { useLessonHref } from '../components/LessonSheet';
-import { addDays, formatDate, formatMoney, wallDateOf, type LedgerType } from '@lessonkaki/shared';
+import { addDays, applyTax, formatDate, formatMoney, resolveTax, wallDateOf, type LedgerType } from '@lessonkaki/shared';
 import { useSubjects } from '../components/LessonTypes';
 import { PortalAccess } from '../components/PortalAccess';
 import { call, db } from '../firebase';
-import { studentName, useDoc, useFormatTs, useQuery, useTeachers, useTimeZone } from '../hooks';
+import { studentName, useDoc, useFormatTs, useQuery, useSchool, useTeachers, useTimeZone } from '../hooks';
 import { useSchoolId, useSession } from '../session';
 import type { Enrolment, Invoice, LedgerEntry, Package, Student } from '../types';
 
@@ -81,7 +81,9 @@ function SellPackage({ studentId }: { studentId: string }) {
   const discountCents = !chosen
     ? 0
     : Math.min(chosen.priceCents, Math.max(0, discountKind === 'percent' ? Math.round((chosen.priceCents * Math.min(amount, 100)) / 100) : Math.round(amount * 100)));
-  const total = (chosen?.priceCents ?? 0) - discountCents;
+  const tax = resolveTax((useSchool().data as { tax?: unknown } | null)?.tax);
+  const taxed = applyTax((chosen?.priceCents ?? 0) - discountCents, tax);
+  const total = taxed.totalCents;
 
   function pick(id: string) {
     setPackageId(id);
@@ -178,16 +180,15 @@ function SellPackage({ studentId }: { studentId: string }) {
               <textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={1000} rows={2} />
             </label>
             <p className="span-all sale-total">
-              {discountCents ? (
-                <>
-                  <span className="muted">
-                    {formatMoney(chosen.priceCents)} − {formatMoney(discountCents)} ={' '}
-                  </span>
-                  <strong>{formatMoney(total)}</strong>
-                </>
-              ) : (
-                <strong>{formatMoney(total)}</strong>
-              )}
+              {discountCents || (tax.enabled && !tax.inclusive) ? (
+                <span className="muted">
+                  {formatMoney(chosen.priceCents)}
+                  {discountCents ? ` − ${formatMoney(discountCents)}` : ''}
+                  {tax.enabled && !tax.inclusive ? ` + ${tax.label} ${formatMoney(taxed.taxCents)}` : ''} ={' '}
+                </span>
+              ) : null}
+              <strong>{formatMoney(total)}</strong>
+              {tax.enabled && tax.inclusive && <span className="muted"> (incl. {tax.label} {formatMoney(taxed.taxCents)})</span>}
               <span className="muted"> · {expiryDate ? `expires ${formatDate(new Date(`${expiryDate}T12:00:00Z`), 'UTC')}` : 'no expiry'}</span>
             </p>
           </>

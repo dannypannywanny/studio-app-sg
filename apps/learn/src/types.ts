@@ -66,6 +66,9 @@ export interface Invoice {
   currency: string;
   subtotalCents: number;
   discountCents: number;
+  taxCents?: number;
+  tax?: { rate: number; label: string; inclusive: boolean; regNo: string | null } | null;
+  creditedCents?: number;
   totalCents: number;
   paidCents: number;
   pendingCents: number;

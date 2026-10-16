@@ -16,7 +16,7 @@ import {
 } from '@lessonkaki/shared';
 import { BookingHours } from '../components/BookingHours';
 import { LessonTypesEditor } from '../components/LessonTypes';
-import { HOLIDAY_COUNTRIES, resolveHolidaySettings, resolveReminders, type HolidayCountry, type ReminderSettings } from '@lessonkaki/shared';
+import { HOLIDAY_COUNTRIES, resolveHolidaySettings, resolveReminders, resolveTax, type HolidayCountry, type ReminderSettings, type TaxSettings } from '@lessonkaki/shared';
 import { call, db } from '../firebase';
 import { useQuery, useSchool } from '../hooks';
 import { useSchoolId, useSession } from '../session';
@@ -237,6 +237,50 @@ function HolidaysForm({ raw, canEdit }: { raw: unknown; canEdit: boolean }) {
           {state.saved && <span className="success">{state.saved}</span>}
           {state.error && <span className="error">{state.error}</span>}
         </div>
+      </fieldset>
+    </form>
+  );
+}
+
+function TaxForm({ raw, canEdit }: { raw: unknown; canEdit: boolean }) {
+  const [t, setT] = useState<TaxSettings>(resolveTax(raw));
+  const s = useSaveSchool();
+  const set = (patch: Partial<TaxSettings>) => setT({ ...t, ...patch });
+  return (
+    <form
+      className="form-grid"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void s.save({ tax: t });
+      }}
+    >
+      <fieldset disabled={!canEdit} className="form-grid span-all fieldset-plain">
+        <label className="field checkbox span-all">
+          <input type="checkbox" checked={t.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
+          <span>Charge tax on new invoices</span>
+        </label>
+        {t.enabled && (
+          <>
+            <label className="field">
+              <span>Name</span>
+              <input value={t.label} onChange={(e) => set({ label: e.target.value })} maxLength={20} />
+            </label>
+            <label className="field">
+              <span>Rate (%)</span>
+              <input type="number" min={0} max={50} step={0.1} value={t.rate} onChange={(e) => set({ rate: Number(e.target.value) })} />
+            </label>
+            <label className="field">
+              <span>Registration no. (on invoices)</span>
+              <input value={t.regNo ?? ''} onChange={(e) => set({ regNo: e.target.value || null })} maxLength={40} />
+            </label>
+            <label className="field checkbox span-all">
+              <input type="checkbox" checked={t.inclusive} onChange={(e) => set({ inclusive: e.target.checked })} />
+              <span>Package prices already include tax (shown as “incl.”, total unchanged)</span>
+            </label>
+          </>
+        )}
+        <p className="muted span-all">Applies to invoices created from now on. Existing invoices keep the tax they were issued with.</p>
+        <SaveRow {...s} disabled={!canEdit} />
       </fieldset>
     </form>
   );
@@ -520,6 +564,9 @@ export function Settings() {
           <BookingHours />
         </Section>
       )}
+      <Section title="Tax (GST)" note={ownerNote ?? 'Off unless your school is registered for GST or another sales tax.'}>
+        <TaxForm raw={(data as { tax?: unknown }).tax} canEdit={isOwner} />
+      </Section>
       <Section title="Reminders to students" note={ownerNote ?? 'Automatic emails to students. Off until you turn them on.'}>
         <RemindersForm raw={(data as { reminders?: unknown }).reminders} canEdit={isOwner} />
       </Section>

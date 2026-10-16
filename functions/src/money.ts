@@ -6,7 +6,7 @@
 // has been paid; refunds and credit notes arrive in M7).
 import { Timestamp, type Firestore } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
-import { NO_EXPIRY, wallClockToUtc, type InvoiceStatus } from '@lessonkaki/shared';
+import { NO_EXPIRY, applyTax, wallClockToUtc, type InvoiceStatus } from '@lessonkaki/shared';
 import { enqueueAlert } from './alerts';
 import { CreditTx } from './creditTx';
 import { audit, notFound, now, readAll, schoolRef, type Actor } from './db';
@@ -336,7 +336,10 @@ export async function editInvoice(db: Firestore, input: EditInvoiceInput, actor:
         ? 0
         : Math.min(subtotal, Math.max(0, d.kind === 'percent' ? Math.round((subtotal * Math.min(d.value, 100)) / 100) : Math.round(d.value)));
       const credit = ((inv.moneyCreditAppliedCents as number | undefined) ?? 0) + ((inv.creditedCents as number | undefined) ?? 0);
-      const total = Math.max(0, subtotal - discountCents - credit);
+      // Tax at the rate the invoice was issued with.
+      const t = inv.tax as { rate: number; inclusive: boolean } | null | undefined;
+      const taxed = applyTax(subtotal - discountCents, { enabled: !!t, rate: t?.rate ?? 0, inclusive: t?.inclusive ?? false });
+      const total = Math.max(0, taxed.totalCents - credit);
       const paid = (inv.paidCents as number | undefined) ?? 0;
       if (total < paid) {
         throw new HttpsError('failed-precondition', 'More has been paid than the new total. Record a refund first, or use a smaller discount.');
@@ -346,6 +349,7 @@ export async function editInvoice(db: Firestore, input: EditInvoiceInput, actor:
       const status: InvoiceStatus = pending === 0 ? 'paid' : paid > 0 ? 'partial' : 'sent';
       Object.assign(update, {
         discountCents,
+        taxCents: taxed.taxCents,
         totalCents: total,
         pendingCents: pending,
         status,

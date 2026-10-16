@@ -595,6 +595,18 @@ export function InvoiceDetail() {
             ))}
           </tbody>
         </table>
+        <dl className="inv-totals">
+          <div><dt>Subtotal</dt><dd className="num">{formatMoney(inv.subtotalCents ?? inv.totalCents, inv.currency)}</dd></div>
+          {(inv.discountCents ?? 0) > 0 && <div><dt>Discount</dt><dd className="num">-{formatMoney(inv.discountCents, inv.currency)}</dd></div>}
+          {inv.tax && (inv.taxCents ?? 0) > 0 && (
+            <div>
+              <dt>{inv.tax.inclusive ? `Incl. ${inv.tax.label}` : inv.tax.label} {inv.tax.rate}%</dt>
+              <dd className="num">{formatMoney(inv.taxCents ?? 0, inv.currency)}</dd>
+            </div>
+          )}
+          {(inv.creditedCents ?? 0) > 0 && <div><dt>Credit note</dt><dd className="num">-{formatMoney(inv.creditedCents ?? 0, inv.currency)}</dd></div>}
+          <div className="inv-total"><dt>Total</dt><dd className="num">{formatMoney(inv.totalCents, inv.currency)}</dd></div>
+        </dl>
       </div>
 
       <div className="card stack">

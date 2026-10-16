@@ -1,6 +1,6 @@
 // Package sales: invoice + lot + grant, then settle the oldest owed lessons onto the new lot.
 // Credit writes go through CreditTx (creditTx.ts); attendance lives in attendance.ts.
-import { wallClockToUtc } from '@lessonkaki/shared';
+import { applyTax, resolveTax, wallClockToUtc } from '@lessonkaki/shared';
 import { Timestamp, type Firestore } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
 import { NO_EXPIRY } from '@lessonkaki/shared';
@@ -123,7 +123,9 @@ export async function sellPackage(
     const discountCents = !d
       ? 0
       : Math.min(subtotalCents, Math.max(0, d.kind === 'percent' ? Math.round((subtotalCents * Math.min(d.value, 100)) / 100) : Math.round(d.value)));
-    const priceCents = subtotalCents - discountCents;
+    // Tax as the school has it set today; the invoice keeps its own copy so later setting changes don't touch it.
+    const tax = resolveTax(schoolSnap.get('tax'));
+    const { taxCents, totalCents: priceCents } = applyTax(subtotalCents - discountCents, tax);
     const note = input.note?.trim().slice(0, 1000) || null;
     const currency = (schoolSnap.get('currency') as string | undefined) ?? 'SGD';
 
@@ -149,6 +151,8 @@ export async function sellPackage(
       ],
       subtotalCents,
       discountCents,
+      taxCents,
+      tax: tax.enabled ? { rate: tax.rate, label: tax.label, inclusive: tax.inclusive, regNo: tax.regNo } : null,
       note,
       moneyCreditAppliedCents: 0,
       totalCents: priceCents,

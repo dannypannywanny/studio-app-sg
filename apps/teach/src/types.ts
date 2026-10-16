@@ -97,6 +97,8 @@ export interface Invoice {
   subtotalCents: number;
   discountCents: number;
   moneyCreditAppliedCents?: number;
+  taxCents?: number;
+  tax?: { rate: number; label: string; inclusive: boolean; regNo: string | null } | null;
   /** Total of credit notes on this invoice. */
   creditedCents?: number;
   totalCents: number;
