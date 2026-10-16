@@ -1,10 +1,12 @@
-import { collection, query, where } from 'firebase/firestore';
+import { collection, doc, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router';
-import { formatDate, formatMoney, type LedgerType } from '@lessonkaki/shared';
+import { useLessonHref } from '../components/LessonSheet';
+import { addDays, formatDate, formatMoney, wallDateOf, type LedgerType } from '@lessonkaki/shared';
+import { useSubjects } from '../components/LessonTypes';
 import { PortalAccess } from '../components/PortalAccess';
 import { call, db } from '../firebase';
-import { studentName, useDoc, useFormatTs, useQuery, useTimeZone } from '../hooks';
+import { studentName, useDoc, useFormatTs, useQuery, useTeachers, useTimeZone } from '../hooks';
 import { useSchoolId, useSession } from '../session';
 import type { Enrolment, Invoice, LedgerEntry, Package, Student } from '../types';
 
@@ -25,22 +27,67 @@ interface SellResult {
 }
 
 const sellPackage = call<
-  { schoolId: string; studentId: string; packageId: string; idempotencyKey: string },
+  {
+    schoolId: string;
+    studentId: string;
+    packageId: string;
+    idempotencyKey: string;
+    validUntil: string | null;
+    discount: { kind: 'percent' | 'amount'; value: number } | null;
+    note: string | null;
+  },
   SellResult
 >('sellPackage');
 
+/** "Voice lessons with Daniel · 12 lessons" (the server writes the same text on the invoice). */
+function usePackageLabels() {
+  const subjects = useSubjects();
+  const teachers = useTeachers();
+  return (p: Package) => {
+    const count = `${p.sessions} ${p.sessions === 1 ? 'lesson' : 'lessons'}`;
+    const s = subjects.data.find((x) => x.id === p.subjectId);
+    if (!s) return `${p.name} · ${count}`;
+    const names = (s.teacherIds ?? [])
+      .map((id) => teachers.byId.get(id))
+      .filter((t) => t && t.active !== false)
+      .map((t) => t!.displayName.trim().split(/\s+/)[0]);
+    return `${s.name}${names.length ? ` with ${names.join(' / ')}` : ''} · ${count}`;
+  };
+}
+
 function SellPackage({ studentId }: { studentId: string }) {
   const schoolId = useSchoolId();
+  const tz = useTimeZone();
+  const today = wallDateOf(new Date(), tz);
+  const label = usePackageLabels();
   const packages = useQuery<Package>(`packages:${schoolId}`, () =>
     query(collection(db, 'schools', schoolId, 'packages'), where('active', '==', true)),
   );
   const [packageId, setPackageId] = useState('');
   // One key per sale: a double click or a retry after a network blip can't sell twice.
   const [idempotencyKey, setKey] = useState(() => crypto.randomUUID());
+  const [expiry, setExpiry] = useState<string | null>(null); // null until picked = package default
+  const [noExpiry, setNoExpiry] = useState(false);
+  const [discountKind, setDiscountKind] = useState<'percent' | 'amount'>('percent');
+  const [discount, setDiscount] = useState('');
+  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const chosen = packages.data.find((p) => p.id === packageId);
+  const defaultExpiry = chosen?.validityDays ? addDays(today, chosen.validityDays) : null;
+  const expiryDate = noExpiry ? null : (expiry ?? defaultExpiry);
+  const amount = Number(discount) || 0;
+  const discountCents = !chosen
+    ? 0
+    : Math.min(chosen.priceCents, Math.max(0, discountKind === 'percent' ? Math.round((chosen.priceCents * Math.min(amount, 100)) / 100) : Math.round(amount * 100)));
+  const total = (chosen?.priceCents ?? 0) - discountCents;
+
+  function pick(id: string) {
+    setPackageId(id);
+    setExpiry(null);
+    setNoExpiry(false);
+  }
 
   async function sell() {
     if (!chosen) return;
@@ -48,12 +95,22 @@ function SellPackage({ studentId }: { studentId: string }) {
     setError(null);
     setMessage(null);
     try {
-      const res = await sellPackage({ schoolId, studentId, packageId: chosen.id, idempotencyKey });
+      const res = await sellPackage({
+        schoolId,
+        studentId,
+        packageId: chosen.id,
+        idempotencyKey,
+        validUntil: expiryDate,
+        discount: discountCents ? { kind: discountKind, value: discountKind === 'percent' ? amount : Math.round(amount * 100) } : null,
+        note: note.trim() || null,
+      });
       setMessage(
-        `Invoice ${res.invoiceNumber} created. ${chosen.sessions} sessions added` +
+        `Invoice ${res.invoiceNumber} created for ${formatMoney(total)}. ${chosen.sessions} ${chosen.sessions === 1 ? "lesson" : "lessons"} added` +
           (res.settled ? `, ${res.settled} owed lesson${res.settled > 1 ? 's' : ''} paid off.` : '.'),
       );
       setPackageId('');
+      setDiscount('');
+      setNote('');
       setKey(crypto.randomUUID());
     } catch (err) {
       setError((err as Error).message);
@@ -65,22 +122,123 @@ function SellPackage({ studentId }: { studentId: string }) {
   return (
     <div className="card stack">
       <h2>Sell package</h2>
-      <div className="row">
-        <select value={packageId} onChange={(e) => setPackageId(e.target.value)} aria-label="Package">
-          <option value="">Choose a package…</option>
-          {packages.data.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name} · {p.sessions} sessions · {formatMoney(p.priceCents)}
-              {p.validityDays ? ` · ${p.validityDays} days` : ''}
-            </option>
-          ))}
-        </select>
-        <button className="btn btn-primary" disabled={!chosen || busy} onClick={sell}>
-          {busy ? 'Selling…' : chosen ? `Sell for ${formatMoney(chosen.priceCents)}` : 'Sell package'}
-        </button>
+      <div className="form-grid">
+        <label className="field span-all">
+          <span>Package</span>
+          <select value={packageId} onChange={(e) => pick(e.target.value)}>
+            <option value="">Choose a package…</option>
+            {packages.data
+              .map((p) => ({ p, text: label(p) }))
+              .sort((a, b) => a.text.localeCompare(b.text, undefined, { numeric: true }))
+              .map(({ p, text }) => (
+                <option key={p.id} value={p.id}>
+                  {text} · {formatMoney(p.priceCents)}
+                  {p.validityDays ? ` · ${p.validityDays} days` : ''}
+                </option>
+              ))}
+          </select>
+        </label>
+        {chosen && (
+          <>
+            <label className="field">
+              <span>Expiry</span>
+              <input
+                type="date"
+                min={today}
+                value={expiryDate ?? ''}
+                disabled={noExpiry}
+                onChange={(e) => setExpiry(e.target.value || null)}
+              />
+            </label>
+            <label className="field checkbox">
+              <input type="checkbox" checked={noExpiry} onChange={(e) => setNoExpiry(e.target.checked)} />
+              <span>No expiry</span>
+            </label>
+            <div className="field">
+              <span>Discount</span>
+              <div className="row discount-row">
+                <select value={discountKind} onChange={(e) => setDiscountKind(e.target.value as 'percent' | 'amount')} aria-label="Discount type">
+                  <option value="percent">%</option>
+                  <option value="amount">Amount</option>
+                </select>
+                <input
+                  type="number"
+                  min={0}
+                  max={discountKind === 'percent' ? 100 : chosen.priceCents / 100}
+                  step={discountKind === 'percent' ? 1 : 0.01}
+                  value={discount}
+                  onChange={(e) => setDiscount(e.target.value)}
+                  placeholder="0"
+                  aria-label="Discount"
+                />
+              </div>
+            </div>
+            <label className="field span-all">
+              <span>Notes (staff only; kept on the invoice and the package)</span>
+              <textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={1000} rows={2} />
+            </label>
+            <p className="span-all sale-total">
+              {discountCents ? (
+                <>
+                  <span className="muted">
+                    {formatMoney(chosen.priceCents)} − {formatMoney(discountCents)} ={' '}
+                  </span>
+                  <strong>{formatMoney(total)}</strong>
+                </>
+              ) : (
+                <strong>{formatMoney(total)}</strong>
+              )}
+              <span className="muted"> · {expiryDate ? `expires ${formatDate(new Date(`${expiryDate}T12:00:00Z`), 'UTC')}` : 'no expiry'}</span>
+            </p>
+          </>
+        )}
+        <div className="form-actions">
+          <button className="btn btn-primary" disabled={!chosen || busy} onClick={sell}>
+            {busy ? 'Selling…' : chosen ? `Sell for ${formatMoney(total)}` : 'Sell package'}
+          </button>
+          {message && <p className="success">{message}</p>}
+          {error && <p className="error">{error}</p>}
+        </div>
       </div>
-      {message && <p className="success">{message}</p>}
-      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+
+function StudentNotes({ studentId, notes }: { studentId: string; notes: string }) {
+  const schoolId = useSchoolId();
+  const [text, setText] = useState(notes);
+  const [state, setState] = useState<{ busy: boolean; saved: boolean; error: string | null }>({ busy: false, saved: false, error: null });
+  const dirty = text !== notes;
+  async function save() {
+    setState({ busy: true, saved: false, error: null });
+    try {
+      await updateDoc(doc(db, 'schools', schoolId, 'students', studentId), { notes: text.trim(), updatedAt: serverTimestamp() });
+      setState({ busy: false, saved: true, error: null });
+    } catch (err) {
+      setState({ busy: false, saved: false, error: (err as Error).message });
+    }
+  }
+  return (
+    <div className="card stack">
+      <h2>Notes</h2>
+      <textarea
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+          setState({ busy: false, saved: false, error: null });
+        }}
+        rows={4}
+        maxLength={5000}
+        placeholder="Anything staff should know: goals, health, who pays, preferences…"
+        aria-label="Student notes"
+      />
+      <div className="row">
+        <button className="btn btn-sm btn-primary" disabled={!dirty || state.busy} onClick={() => void save()}>
+          {state.busy ? 'Saving…' : 'Save notes'}
+        </button>
+        {state.saved && !dirty && <span className="success">Saved.</span>}
+        {state.error && <span className="error">{state.error}</span>}
+      </div>
     </div>
   );
 }
@@ -172,6 +330,7 @@ export function StudentDetail() {
   const { role } = useSession();
   const tz = useTimeZone();
   const fmt = useFormatTs();
+  const lessonHref = useLessonHref();
   const student = useDoc<Student>(`schools/${schoolId}/students/${studentId}`);
   const byStudent = (name: string) => () =>
     query(collection(db, 'schools', schoolId, name), where('studentId', '==', studentId));
@@ -228,6 +387,7 @@ export function StudentDetail() {
 
       <PortalAccess studentId={studentId} hasLogin={Boolean((s as { uid?: string }).uid)} hasEmail={Boolean(s.email)} />
 
+      <StudentNotes key={s.notes ?? ''} studentId={studentId} notes={s.notes ?? ''} />
       <SellPackage studentId={studentId} />
 
       <div className="card stack">
@@ -294,7 +454,7 @@ export function StudentDetail() {
                   </td>
                   <td className={`num ${e.delta < 0 ? 'neg' : 'pos'}`}>{e.delta > 0 ? `+${e.delta}` : e.delta}</td>
                   <td>{e.enrolmentId ? (lotName.get(e.enrolmentId) ?? '—') : '—'}</td>
-                  <td>{e.lessonId ? <Link to={`/lessons/${e.lessonId}`}>View</Link> : '—'}</td>
+                  <td>{e.lessonId ? <Link to={lessonHref(e.lessonId)}>View</Link> : '—'}</td>
                 </tr>
               ))}
             </tbody>

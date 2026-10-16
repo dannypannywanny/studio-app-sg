@@ -56,12 +56,11 @@ export interface SummaryDelta {
 export const millis = (t: Timestamp | null | undefined) => (t ? t.toMillis() : NO_EXPIRY.getTime());
 
 /** Earliest-expiring first, then oldest. Skips empty lots and lots that expire before `atMs`. */
-export function pickLot(lots: LotState[], atMs: number): LotState | null {
-  return (
-    lots
-      .filter((l) => l.status === 'active' && l.remaining > 0 && l.validUntilMs >= atMs)
-      .sort((a, b) => a.validUntilMs - b.validUntilMs || a.validFromMs - b.validFromMs)[0] ?? null
-  );
+export function pickLot(lots: LotState[], atMs: number, preferredId: string | null = null): LotState | null {
+  const usable = lots.filter((l) => l.status === 'active' && l.remaining > 0 && l.validUntilMs >= atMs);
+  // Staff can choose the package for a student's lesson; if it can't pay (used up, expired), fall back.
+  const preferred = preferredId ? usable.find((l) => l.id === preferredId) : undefined;
+  return preferred ?? usable.sort((a, b) => a.validUntilMs - b.validUntilMs || a.validFromMs - b.validFromMs)[0] ?? null;
 }
 
 export class CreditTx {

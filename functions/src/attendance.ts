@@ -58,7 +58,8 @@ export async function prepareTransition(
   const holdsCharge = attendee.get('ledgerEntryId') != null;
   const wantsCharge = consumesCredit(to, policy);
   if (wantsCharge && !holdsCharge) {
-    const lot = pickLot(await readActiveLots(ct, attendee.id), lessonStart.toMillis());
+    const preferred = (attendee.get('preferredEnrolmentId') as string | null | undefined) ?? null;
+    const lot = pickLot(await readActiveLots(ct, attendee.id), lessonStart.toMillis(), preferred);
     if (!lot && !policy.allowOwedLessons) {
       throw new HttpsError('failed-precondition', 'This student has no credits left');
     }
@@ -322,6 +323,36 @@ export function newAttendeeDoc(schoolId: string, lessonId: string, studentId: st
     createdAt: now(),
     updatedAt: now(),
   };
+}
+
+/**
+ * Chooses which package pays for a student's lesson (null = earliest expiry). Only before the credit is
+ * taken: a charged lesson is unmarked first, so the ledger never has to move a debit between packages.
+ */
+export async function setAttendeePackage(
+  db: Firestore,
+  input: AttendeeInput & { enrolmentId: string | null },
+  actor: Actor,
+): Promise<{ ok: true }> {
+  const school = schoolRef(db, input.schoolId);
+  return db.runTransaction(async (tx) => {
+    const attendeeRef = school.collection('lessons').doc(input.lessonId).collection('attendees').doc(input.studentId);
+    const [attendeeSnap, lotSnap] = await readAll(
+      tx,
+      attendeeRef,
+      ...(input.enrolmentId ? [school.collection('enrolments').doc(input.enrolmentId)] : []),
+    );
+    if (!attendeeSnap?.exists) notFound('Student on this lesson');
+    if (attendeeSnap.get('ledgerEntryId') != null) {
+      throw new HttpsError('failed-precondition', 'A credit was already used for this lesson. Unmark it first, then choose the package.');
+    }
+    if (input.enrolmentId && (!lotSnap?.exists || lotSnap.get('studentId') !== input.studentId)) {
+      throw new HttpsError('invalid-argument', "That package isn't this student's");
+    }
+    tx.update(attendeeRef, { preferredEnrolmentId: input.enrolmentId, updatedAt: now() });
+    audit(tx, school, actor, 'setAttendeePackage', `lessons/${input.lessonId}/attendees/${input.studentId}`, { enrolmentId: input.enrolmentId });
+    return { ok: true };
+  });
 }
 
 export async function addAttendee(

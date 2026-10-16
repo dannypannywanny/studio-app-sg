@@ -1,12 +1,17 @@
 // New lesson: one-off or weekly series. Used by the calendar and the lesson list.
-import { collection, query } from 'firebase/firestore';
 import { useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router';
+import { Link } from 'react-router';
 import { WEEKDAYS, wallClockToUtc, wallDateOf, weekdayOf, type Weekday } from '@lessonkaki/shared';
-import { call, db } from '../firebase';
-import { studentName, useQuery, useStudents, useTeachers, useTimeZone } from '../hooks';
+import { call } from '../firebase';
+import { useTimeZone } from '../hooks';
+import { useLessonTypes } from './LessonTypes';
+import { ConflictBanner } from './Conflicts';
+import { useRooms } from './Rooms';
+import { useOpenLesson } from './LessonSheet';
+import { StudentMultiPicker } from './StudentPicker';
+import { PackageSelect, setAttendeePackage } from './PackagePick';
+import { studentName, useStudents } from '../hooks';
 import { useSchoolId, useSession } from '../session';
-import type { Subject } from '../types';
 
 interface Shape {
   schoolId: string;
@@ -15,6 +20,7 @@ interface Shape {
   durationMin: number;
   studentIds: string[];
   isOnline: boolean;
+  locationId: string | null;
 }
 
 const createLesson = call<Shape & { startAt: string }, { lessonId: string }>('createLesson');
@@ -50,20 +56,32 @@ interface CallableError {
 
 export function LessonForm({ onDone, initialDate }: { onDone: () => void; initialDate?: string }) {
   const schoolId = useSchoolId();
-  const { teacherId: myTeacherId } = useSession();
+  const { teacherId: myTeacherId, role } = useSession();
   const tz = useTimeZone();
-  const navigate = useNavigate();
-  const students = useStudents();
-  const teachers = useTeachers();
-  const subjects = useQuery<Subject>(`subjects:${schoolId}`, () => query(collection(db, 'schools', schoolId, 'subjects')));
+  const openLesson = useOpenLesson();
+  // Owners and admins book for any teacher; a teacher login only for themselves.
+  const { types, loading: typesLoading } = useLessonTypes(role === 'teacher' ? myTeacherId : null);
 
   const initial = defaultsIn(tz);
   const [date, setDate] = useState(initialDate ?? initial.date);
   const [time, setTime] = useState(initial.time);
-  const [durationMin, setDuration] = useState(60);
-  const [teacherId, setTeacherId] = useState(myTeacherId ?? '');
-  const [subjectId, setSubjectId] = useState('');
+  const [typeKey, setTypeKey] = useState('');
+  const [minutes, setMinutes] = useState<number | null>(null);
   const [studentIds, setStudentIds] = useState<string[]>([]);
+  const [packages, setPackages] = useState<Record<string, string | null>>({});
+  const places = useRooms();
+  const [roomId, setRoomId] = useState('');
+  const room = places.rooms.find((r) => r.id === roomId) ?? places.rooms[0] ?? null;
+  const students = useStudents();
+  // Choices made in the form, applied to the new lesson(s) once they exist.
+  const applyPackages = (lessonIds: string[]) =>
+    Promise.all(
+      lessonIds.flatMap((lessonId) =>
+        studentIds
+          .filter((id) => packages[id])
+          .map((studentId) => setAttendeePackage({ schoolId, lessonId, studentId, enrolmentId: packages[studentId] ?? null })),
+      ),
+    );
   const [isOnline, setOnline] = useState(false);
   const [repeats, setRepeats] = useState(false);
   const [byDay, setByDay] = useState<Weekday[] | null>(null);
@@ -72,32 +90,34 @@ export function LessonForm({ onDone, initialDate }: { onDone: () => void; initia
   const [error, setError] = useState<string | null>(null);
   const [clashes, setClashes] = useState<string[] | null>(null);
 
-  const teacher = teacherId || teachers.data[0]?.id || '';
-  const subject = subjectId || subjects.data[0]?.id || '';
+  // Until a type is picked: the signed-in teacher's first, else the first on the list.
+  const mine = types.filter((t) => t.teacherId === myTeacherId);
+  const type =
+    types.find((t) => t.key === typeKey) ?? mine.find((t) => t.isDefault) ?? mine[0] ?? types.find((t) => t.isDefault) ?? types[0];
+  const durationMin = minutes ?? type?.durationMin ?? 60;
   const days = byDay ?? [weekdayOf(date)];
-  const active = students.data
-    .filter((s) => s.status === 'active')
-    .sort((a, b) => studentName(a).localeCompare(studentName(b)));
-
-  const toggle = (id: string) => setStudentIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
   const toggleDay = (d: Weekday) =>
     setByDay(days.includes(d) ? days.filter((x) => x !== d) : WEEKDAYS.filter((x) => x === d || days.includes(x)));
 
   async function save(skipConflicts: boolean) {
+    if (!type) return setError('Set up a subject and its teachers in Settings first.');
     if (studentIds.length === 0) return setError('Pick at least one student.');
     if (repeats && days.length === 0) return setError('Pick at least one weekday.');
     setBusy(true);
     setError(null);
-    const shape = { schoolId, teacherId: teacher, subjectId: subject, durationMin, studentIds, isOnline };
+    const locationId = isOnline ? (places.online?.id ?? null) : (room?.id ?? null);
+    const shape = { schoolId, teacherId: type.teacherId, subjectId: type.subjectId, durationMin, studentIds, isOnline, locationId };
     try {
       if (repeats) {
         const res = await createSeries({ ...shape, startDate: date, time, byDay: days, until: until || null, skipConflicts });
+        await applyPackages(res.lessonIds);
         onDone();
-        navigate(`/lessons/${res.lessonIds[0]}`);
+        if (res.lessonIds[0]) openLesson(res.lessonIds[0]);
       } else {
         const { lessonId } = await createLesson({ ...shape, startAt: wallClockToUtc(date, time, tz).toISOString() });
+        await applyPackages([lessonId]);
         onDone();
-        navigate(`/lessons/${lessonId}`);
+        openLesson(lessonId);
       }
     } catch (err) {
       const e = err as CallableError;
@@ -123,6 +143,29 @@ export function LessonForm({ onDone, initialDate }: { onDone: () => void; initia
         <span>Start ({tz})</span>
         <input type="time" required value={time} onChange={(e) => setTime(e.target.value)} />
       </label>
+      <label className="field lesson-type">
+        <span>Lesson</span>
+        <select
+          value={type?.key ?? ''}
+          onChange={(e) => {
+            setTypeKey(e.target.value);
+            setMinutes(null); // the new type's length, unless changed again below
+          }}
+          disabled={types.length === 0}
+        >
+          {types.length === 0 && <option value="">{typesLoading ? 'Loading…' : 'No lessons set up yet'}</option>}
+          {types.map((t) => (
+            <option key={t.key} value={t.key}>
+              {t.label}
+            </option>
+          ))}
+        </select>
+        {!typesLoading && types.length === 0 && (
+          <span className="field-help">
+            Add subjects, lengths and teachers in <Link to="/settings">Settings</Link>.
+          </span>
+        )}
+      </label>
       <label className="field">
         <span>Minutes</span>
         <input
@@ -131,30 +174,32 @@ export function LessonForm({ onDone, initialDate }: { onDone: () => void; initia
           max={720}
           step={5}
           required
-          value={durationMin}
-          onChange={(e) => setDuration(Number(e.target.value))}
+          value={type || minutes !== null ? durationMin : ''}
+          onChange={(e) => setMinutes(Number(e.target.value))}
         />
       </label>
-      <label className="field">
-        <span>Teacher</span>
-        <select value={teacher} onChange={(e) => setTeacherId(e.target.value)}>
-          {teachers.data.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.displayName}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="field">
-        <span>Subject</span>
-        <select value={subject} onChange={(e) => setSubjectId(e.target.value)}>
-          {subjects.data.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-      </label>
+      {places.many && !isOnline && (
+        <label className="field">
+          <span>Room</span>
+          <select value={room?.id ?? ''} onChange={(e) => setRoomId(e.target.value)}>
+            {places.rooms.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {type && (
+        <ConflictBanner
+          teacherId={type.teacherId}
+          roomId={isOnline ? null : (room?.id ?? null)}
+          date={date}
+          time={time}
+          durationMin={durationMin}
+          repeats={repeats}
+        />
+      )}
       <label className="field checkbox">
         <input type="checkbox" checked={isOnline} onChange={(e) => setOnline(e.target.checked)} />
         <span>Online</span>
@@ -185,15 +230,17 @@ export function LessonForm({ onDone, initialDate }: { onDone: () => void; initia
       )}
       <fieldset className="field span-all">
         <legend>Students</legend>
-        <div className="chips">
-          {active.map((s) => (
-            <label key={s.id} className={`chip ${studentIds.includes(s.id) ? 'on' : ''}`}>
-              <input type="checkbox" checked={studentIds.includes(s.id)} onChange={() => toggle(s.id)} />
-              {studentName(s)}
-            </label>
-          ))}
-          {active.length === 0 && <span className="muted">No active students yet.</span>}
-        </div>
+        <StudentMultiPicker value={studentIds} onChange={setStudentIds} />
+        {studentIds.length > 0 && (
+          <div className="package-picks">
+            {studentIds.map((id) => (
+              <label key={id} className="package-pick">
+                <span>{studentName(students.byId.get(id))}</span>
+                <PackageSelect studentId={id} value={packages[id] ?? null} onChange={(v) => setPackages({ ...packages, [id]: v })} />
+              </label>
+            ))}
+          </div>
+        )}
       </fieldset>
       <div className="form-actions">
         <button className="btn btn-primary" disabled={busy}>

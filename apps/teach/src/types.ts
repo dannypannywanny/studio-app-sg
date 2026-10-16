@@ -27,11 +27,18 @@ export interface Teacher {
   displayName: string;
   email?: string;
   active: boolean;
+  /** Subjects this teacher teaches (online booking reads this too). */
+  subjectIds?: string[];
 }
 
 export interface Subject {
   name: string;
+  /** Lengths offered, in minutes, e.g. [30, 45, 60]. Older docs only have defaultDurationMin. */
+  durations?: number[];
   defaultDurationMin: number;
+  teacherIds?: string[];
+  /** Most students in one lesson (group classes); 1 = one-on-one. */
+  capacity?: number;
   active: boolean;
 }
 
@@ -40,6 +47,7 @@ export interface Package {
   sessions: number;
   priceCents: number;
   validityDays: number | null;
+  subjectId?: string | null;
   active: boolean;
 }
 
@@ -51,6 +59,10 @@ export interface Student {
   phone?: string;
   status: StudentStatus;
   legacyId?: string | null;
+  /** Staff notes about the student (shown on their page and in the lesson sheet). */
+  notes?: string;
+  /** Date the student joined the school (yyyy-MM-dd); for imports, their original sign-up date. */
+  createdOn?: string | null;
   summary?: Partial<StudentSummary> & { outstandingCents?: number; moneyCreditCents?: number };
   createdAt?: Ts;
 }
@@ -84,6 +96,7 @@ export interface Invoice {
   currency: string;
   subtotalCents: number;
   discountCents: number;
+  moneyCreditAppliedCents?: number;
   totalCents: number;
   paidCents: number;
   pendingCents: number;
@@ -91,6 +104,7 @@ export interface Invoice {
   issueDate: Ts;
   dueDate: Ts;
   lines: { desc: string; qty: number; unitCents: number }[];
+  note?: string | null;
   overdueSince?: Ts | null;
   voidReason?: string | null;
   paidAt?: Ts | null;
@@ -135,5 +149,7 @@ export interface Attendee {
   owed: boolean;
   enrolmentId: string | null;
   ledgerEntryId: string | null;
+  /** Package staff chose to pay for this lesson (null = earliest expiry). */
+  preferredEnrolmentId?: string | null;
   markedAt: Ts | null;
 }

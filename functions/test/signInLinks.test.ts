@@ -3,7 +3,7 @@ import { getAuth } from 'firebase-admin/auth';
 import type { MailSender, OutgoingMail } from '../src/alerts';
 import { inviteStudents } from '../src/invites';
 import { setMemberRole } from '../src/members';
-import { RESEND_GAP_MS, rewriteLink, sendSignInLink } from '../src/signInLinks';
+import { CODE_TTL_MS, MAX_CODE_TRIES, RESEND_GAP_MS, rewriteLink, sendSignInLink, verifySignInCode } from '../src/signInLinks';
 import { addStudent, db, makeSchool, owner } from './helpers';
 
 const auth = getAuth();
@@ -37,7 +37,8 @@ describe('sendSignInLink', () => {
     expect(await sendSignInLink(db, auth, sender, { email: email.toUpperCase(), host }, { defaultFrom: FROM })).toBe('sent');
     expect(sender.sent).toHaveLength(1);
     const mail = sender.sent[0]!;
-    expect(mail).toMatchObject({ from: 'Test School <hi@school.example.test>', to: [email], subject: 'Your sign-in link for Test School' });
+    expect(mail).toMatchObject({ from: 'Test School <hi@school.example.test>', to: [email], });
+    expect(mail.subject).toMatch(/^\d{6} is your sign-in code for Test School$/);
     const link = mail.text.split('\n').find((l) => l.startsWith('https://'))!;
     expect(link.startsWith(`https://${host}/finish-signin?`)).toBe(true);
     expect(new URL(link).searchParams.get('mode')).toBe('signIn');
@@ -76,5 +77,67 @@ describe('sendSignInLink', () => {
   it('rewrites the Firebase link onto the learn site, keeping its code', () => {
     const link = rewriteLink('https://p.firebaseapp.com/__/auth/action?apiKey=k&mode=signIn&oobCode=abc&continueUrl=x', 'learn.example.test');
     expect(link).toBe('https://learn.example.test/finish-signin?apiKey=k&mode=signIn&oobCode=abc&continueUrl=x');
+  });
+});
+
+describe('verifySignInCode', () => {
+  const codeOf = (mail: { subject: string }) => mail.subject.slice(0, 6);
+  const wrong = (code: string) => String((Number(code) + 1) % 1_000_000).padStart(6, '0');
+
+  async function sent(at = new Date()) {
+    const s = await setup();
+    const sender = new FakeSender();
+    expect(await sendSignInLink(db, auth, sender, { email: s.email, host: s.host }, { defaultFrom: FROM }, at)).toBe('sent');
+    const mail = sender.sent[0]!;
+    expect(mail.text).toContain(codeOf(mail));
+    expect(mail.html).toContain(codeOf(mail));
+    return { ...s, code: codeOf(mail), sender };
+  }
+
+  it("returns a token for the student's account, once", async () => {
+    const { host, email, code } = await sent();
+    const token = await verifySignInCode(db, auth, { email: email.toUpperCase(), code: `${code.slice(0, 3)} ${code.slice(3)}`, host });
+    const uid = (await auth.getUserByEmail(email)).uid;
+    const payload = JSON.parse(Buffer.from(token.split('.')[1]!, 'base64url').toString());
+    expect(payload.uid).toBe(uid);
+    await expect(verifySignInCode(db, auth, { email, code, host })).rejects.toThrow(/wrong or has expired/);
+  });
+
+  it('refuses expired codes', async () => {
+    const at = new Date('2027-01-04T10:00:00Z');
+    const { host, email, code } = await sent(at);
+    await expect(verifySignInCode(db, auth, { email, code, host }, new Date(at.getTime() + CODE_TTL_MS))).rejects.toThrow(/wrong or has expired/);
+  });
+
+  it('burns the code after too many wrong guesses', async () => {
+    const { host, email, code } = await sent();
+    for (let i = 1; i < MAX_CODE_TRIES; i++) await expect(verifySignInCode(db, auth, { email, code: wrong(code), host })).rejects.toThrow(/wrong/);
+    await expect(verifySignInCode(db, auth, { email, code: wrong(code), host })).rejects.toThrow(/Too many/);
+    await expect(verifySignInCode(db, auth, { email, code, host })).rejects.toThrow(/wrong or has expired/);
+  });
+
+  it('only the newest code works', async () => {
+    const at = new Date('2027-01-04T10:00:00Z');
+    const first = await sent(at);
+    const sender = new FakeSender();
+    await sendSignInLink(db, auth, sender, { email: first.email, host: first.host }, { defaultFrom: FROM }, new Date(at.getTime() + RESEND_GAP_MS));
+    const later = new Date(at.getTime() + RESEND_GAP_MS + 1);
+    if (codeOf(sender.sent[0]!) !== first.code) {
+      await expect(verifySignInCode(db, auth, { email: first.email, code: first.code, host: first.host }, later)).rejects.toThrow(/wrong/);
+    }
+    await expect(verifySignInCode(db, auth, { email: first.email, code: codeOf(sender.sent[0]!), host: first.host }, later)).resolves.toBeTruthy();
+  });
+
+  it('refuses logins that also have a staff role (they need two-step sign-in)', async () => {
+    const { t, host, email, code } = await sent();
+    const other = await makeSchool();
+    await setMemberRole(db, auth, { schoolId: other.schoolId, email, role: 'admin' }, owner);
+    await expect(verifySignInCode(db, auth, { email, code, host })).rejects.toThrow(/two-step/);
+    expect(t.schoolId).not.toBe(other.schoolId);
+  });
+
+  it('refuses sites that are not set up as a learn site', async () => {
+    const { email, code } = await sent();
+    await expect(verifySignInCode(db, auth, { email, code, host: 'evil.example.test' })).rejects.toThrow(/not set up/);
   });
 });

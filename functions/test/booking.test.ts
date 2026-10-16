@@ -209,3 +209,60 @@ describe('bookLesson', () => {
     await expect(book(t, MON, '10:00', { as: student(t, 'other') })).resolves.toMatchObject({ existing: false });
   });
 });
+
+describe('group lessons (subject capacity)', () => {
+  const groupOf = async (t: TestSchool, capacity: number) => {
+    await db.doc(`schools/${t.schoolId}/subjects/${t.subjectId}`).update({ capacity });
+    return t;
+  };
+
+  it('capacity 1 (default): a booked time disappears', async () => {
+    const t = await setup();
+    await book(t, MON, '10:30');
+    const other = await addStudent(t, 'other');
+    expect(await slotTimes(t, student(t, other))).toEqual([]);
+  });
+
+  it('a lesson with places left stays bookable at its own time only, and booking joins it', async () => {
+    const t = await groupOf(await setup(), 3);
+    const first = await book(t, MON, '10:30');
+    const b = await addStudent(t, 'b');
+    const c = await addStudent(t, 'c');
+    const d = await addStudent(t, 'd');
+    const res = await getAvailability(db, { schoolId: t.schoolId }, student(t, b), NOW);
+    const mon = res.slots.filter((s) => Date.parse(s.startAt) < sg(TUE, '00:00').getTime());
+    expect(mon.map((s) => [hhmm(s.startAt), s.spotsLeft])).toEqual([['10:30', 2]]); // 10:00 and 11:00 overlap it
+    const joined = await book(t, MON, '10:30', { as: student(t, b) });
+    expect(joined.lessonId).toBe(first.lessonId);
+    await book(t, MON, '10:30', { as: student(t, c) });
+    const l = await lessonDoc(t, first.lessonId);
+    expect([...l.studentIds].sort()).toEqual([t.studentId, b, c].sort());
+    expect(await attendee(t, first.lessonId, c)).toMatchObject({ status: 'booked', source: 'portal' });
+    // Full now: gone for everyone else, and booking it fails.
+    expect(await slotTimes(t, student(t, d))).toEqual([]);
+    await expect(book(t, MON, '10:30', { as: student(t, d) })).rejects.toThrow(/no longer available/);
+  });
+
+  it('a group lesson of another length or subject is just busy', async () => {
+    const t = await groupOf(await setup(), 5);
+    const other = await addStudent(t, 'other');
+    await createLesson(
+      db,
+      { schoolId: t.schoolId, teacherId: t.teacherId, subjectId: t.subjectId, startAt: sg(MON, '10:30'), durationMin: 60, studentIds: [other], isOnline: false },
+      owner,
+    );
+    expect(await slotTimes(t)).toEqual([]);
+  });
+});
+
+describe('public holidays', () => {
+  it('a school closed on public holidays offers nothing that day and refuses bookings', async () => {
+    const t = await setup();
+    await db.doc(`schools/${t.schoolId}`).update({ holidays: { country: 'SG', closed: true } });
+    const holidayNow = sg('2027-02-07', '09:00'); // Sunday; Monday 2027-02-08 is Chinese New Year (observed)
+    const res = await getAvailability(db, { schoolId: t.schoolId }, student(t), holidayNow);
+    expect(res.slots.filter((s) => s.startAt.startsWith('2027-02-08'))).toEqual([]);
+    expect(res.slots.length).toBeGreaterThan(0); // other days still open
+    await expect(book(t, '2027-02-08', '10:00', { at: holidayNow })).rejects.toThrow(/public holiday/);
+  });
+});

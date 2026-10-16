@@ -2,6 +2,7 @@ import { collection, limit, orderBy, query, Timestamp, where } from 'firebase/fi
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { LessonForm } from '../components/LessonForm';
+import { useLessonHref } from '../components/LessonSheet';
 import { db } from '../firebase';
 import { studentName, useFormatTs, useQuery, useStudents, useTeachers } from '../hooks';
 import { useSchoolId } from '../session';
@@ -20,6 +21,7 @@ export function Lessons() {
   const fmt = useFormatTs();
   const students = useStudents();
   const teachers = useTeachers();
+  const lessonHref = useLessonHref();
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState<Filter>('all');
   // "Past, not marked": lessons that have happened and still need their attendance recorded, newest
@@ -76,7 +78,7 @@ export function Lessons() {
             {rows.map((l) => (
               <tr key={l.id} className={l.status === 'cancelled' ? 'cancelled' : ''}>
                 <td>
-                  <Link to={`/lessons/${l.id}`}>{fmt(l.startAt)}</Link>
+                  <Link to={lessonHref(l.id)}>{fmt(l.startAt)}</Link>
                   <span className="muted"> · {l.durationMin} min{l.seriesId ? ' · weekly' : ''}</span>
                 </td>
                 <td>{l.studentIds.map((id) => studentName(students.byId.get(id))).join(', ')}</td>

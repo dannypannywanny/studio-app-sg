@@ -15,10 +15,12 @@ import {
   type CreditPolicy,
 } from '@lessonkaki/shared';
 import { BookingHours } from '../components/BookingHours';
-import { db } from '../firebase';
+import { LessonTypesEditor } from '../components/LessonTypes';
+import { HOLIDAY_COUNTRIES, resolveHolidaySettings, type HolidayCountry } from '@lessonkaki/shared';
+import { call, db } from '../firebase';
 import { useQuery, useSchool } from '../hooks';
 import { useSchoolId, useSession } from '../session';
-import type { Subject, Ts } from '../types';
+import type { Ts } from '../types';
 
 function Section({ title, children, note }: { title: string; note?: string; children: ReactNode }) {
   return (
@@ -188,6 +190,57 @@ const ALERT_TYPE_LABELS: Record<string, string> = {
 };
 
 const ALERT_STATUS_LABELS: Record<string, string> = { pending: 'Sending', sent: 'Sent', skipped: 'Not sent', failed: 'Failed' };
+
+const setHolidays = call<{ schoolId: string; country: HolidayCountry | null; closed: boolean }, { country: string | null; count: number }>(
+  'setHolidays',
+);
+
+function HolidaysForm({ raw, canEdit }: { raw: unknown; canEdit: boolean }) {
+  const schoolId = useSchoolId();
+  const initial = resolveHolidaySettings(raw);
+  const [country, setCountry] = useState<HolidayCountry | ''>(initial.country ?? '');
+  const [closed, setClosed] = useState(initial.closed);
+  const [state, setState] = useState<{ busy: boolean; saved: string | null; error: string | null }>({ busy: false, saved: null, error: null });
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setState({ busy: true, saved: null, error: null });
+    try {
+      const res = await setHolidays({ schoolId, country: country || null, closed: !!country && closed });
+      setState({ busy: false, saved: country ? `Saved: ${res.count} public holidays loaded.` : 'Saved.', error: null });
+    } catch (err) {
+      setState({ busy: false, saved: null, error: (err as Error).message });
+    }
+  }
+  return (
+    <form className="form-grid" onSubmit={submit}>
+      <fieldset disabled={!canEdit} className="form-grid span-all fieldset-plain">
+        <label className="field">
+          <span>Country</span>
+          <select value={country} onChange={(e) => setCountry(e.target.value as HolidayCountry | '')}>
+            <option value="">None</option>
+            {Object.entries(HOLIDAY_COUNTRIES).map(([code, name]) => (
+              <option key={code} value={code}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field checkbox span-all">
+          <input type="checkbox" checked={closed} disabled={!country} onChange={(e) => setClosed(e.target.checked)} />
+          <span>Closed on public holidays (no online booking; shown as time off on the calendar)</span>
+        </label>
+        <p className="muted span-all">National public holidays only; regional or state holidays aren't included. Block those with time off.</p>
+        <div className="form-actions">
+          <button className="btn btn-primary" disabled={state.busy || !canEdit}>
+            {state.busy ? 'Saving…' : 'Save'}
+          </button>
+          {state.saved && <span className="success">{state.saved}</span>}
+          {state.error && <span className="error">{state.error}</span>}
+        </div>
+      </fieldset>
+    </form>
+  );
+}
 
 function AlertsForm({ settings, canEdit }: { settings: AlertSettings; canEdit: boolean }) {
   const [to, setTo] = useState(settings.to.join(', '));
@@ -412,18 +465,19 @@ export function Settings() {
           <BookingHours />
         </Section>
       )}
+      <Section title="Public holidays" note={ownerNote ?? 'Holidays are labelled on the calendar. Schools that open on them can leave “Closed” off.'}>
+        <HolidaysForm raw={(data as { holidays?: unknown }).holidays} canEdit={isOwner} />
+      </Section>
       <Section title="Branding" note={ownerNote ?? 'Colours, fonts and logo for this school. Leave blank to use the LessonKaki defaults.'}>
         <BrandingForm branding={data.branding ?? {}} canEdit={isOwner} />
       </Section>
-      <Section title="Subjects">
-        <NamedList<Subject>
-          path="subjects"
-          label="subject"
-          extra={(s) => `${s.defaultDurationMin ?? 60} min default`}
-          make={(name) => ({ name, teacherIds: [], defaultDurationMin: 60 })}
-        />
+      <Section title="Lessons offered" note="Each subject's lengths and who teaches it. New lessons are picked from these, e.g. “Voice lessons with Daniel · 45 min”.">
+        <LessonTypesEditor />
       </Section>
-      <Section title="Locations">
+      <Section
+        title="Rooms and locations"
+        note="Each in-person location is a room. With more than one room, lessons get a room picker and the calendar a room filter; with one, every lesson uses it. Locations named Online or Zoom are for online lessons."
+      >
         <NamedList<Location>
           path="locations"
           label="location"

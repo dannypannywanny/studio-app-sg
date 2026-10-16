@@ -7,6 +7,7 @@ import { studentName, useQuery, useStudents, useTeachers, useTimeZone } from '..
 import { useSchoolId } from '../session';
 import type { Invoice, Lesson } from '../types';
 import { invoiceBadge } from './Invoices';
+import { useLessonHref } from '../components/LessonSheet';
 
 const STATE_LABEL = { unmarked: 'Not marked', partial: 'Partly marked', marked: 'Marked' } as const;
 
@@ -15,6 +16,7 @@ export function Dashboard() {
   const tz = useTimeZone();
   const students = useStudents();
   const teachers = useTeachers();
+  const lessonHref = useLessonHref();
   const today = wallDateOf(new Date(), tz);
   const from = wallClockToUtc(today, '00:00', tz);
   const to = wallClockToUtc(addDays(today, 1), '00:00', tz);
@@ -88,7 +90,7 @@ export function Dashboard() {
               {lessons.data.map((l) => (
                 <tr key={l.id} className={l.status === 'cancelled' ? 'cancelled' : ''}>
                   <td>
-                    <Link to={`/lessons/${l.id}`}>{wallTimeOf(l.startAt.toDate(), tz)}</Link>
+                    <Link to={lessonHref(l.id)}>{wallTimeOf(l.startAt.toDate(), tz)}</Link>
                     <span className="muted"> · {l.durationMin} min</span>
                   </td>
                   <td>{l.studentIds.map((id) => studentName(students.byId.get(id))).join(', ') || '—'}</td>

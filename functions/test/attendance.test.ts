@@ -6,6 +6,7 @@ import {
   cancelLesson,
   removeAttendee,
   setAttendance,
+  setAttendeePackage,
   type CancelMode,
   type MarkableStatus,
 } from '../src/attendance';
@@ -219,5 +220,35 @@ describe('attendanceStateOf', () => {
     expect(attendanceStateOf(['removed'])).toBe('unmarked');
     expect(attendanceStateOf(['present', 'removed'])).toBe('marked');
     expect(attendanceStateOf(['present', 'booked', 'removed'])).toBe('partial');
+  });
+});
+
+describe('choosing the package for a lesson', () => {
+  const choose = (t: TestSchool, lessonId: string, enrolmentId: string | null) =>
+    setAttendeePackage(db, { schoolId: t.schoolId, lessonId, studentId: t.studentId, enrolmentId }, owner);
+
+  it('marking uses the chosen package instead of the earliest-expiring one', async () => {
+    const t = await school();
+    const soon = await sell(t, t.pkg30);
+    const later = await sell(t, t.pkg90);
+    const auto = await lesson(t);
+    await mark(t, auto, 'present');
+    expect((await attendee(t, auto)).enrolmentId).toBe(soon.enrolmentId); // default: earliest expiry
+
+    const chosen = await lesson(t);
+    await choose(t, chosen, later.enrolmentId);
+    await mark(t, chosen, 'present');
+    expect((await attendee(t, chosen)).enrolmentId).toBe(later.enrolmentId);
+    expect((await lot(t, later.enrolmentId)).sessionsRemaining).toBe(3);
+  });
+
+  it("rejects another student's or unknown package, and refuses once the credit is taken", async () => {
+    const t = await school();
+    const soon = await sell(t, t.pkg30);
+    const id = await lesson(t);
+    await expect(choose(t, id, 'not-a-lot')).rejects.toThrow(/isn't this student's/);
+    await mark(t, id, 'present');
+    expect((await attendee(t, id)).enrolmentId).toBe(soon.enrolmentId);
+    await expect(choose(t, id, soon.enrolmentId)).rejects.toThrow(/Unmark it first/);
   });
 });

@@ -1,52 +1,88 @@
-/*
- * Design tokens. The ONLY place colours, fonts, radii and the logo are defined.
- * These are the LessonKaki defaults. A school's theme comes from schools/{id}.branding and is applied at
- * runtime as overrides of these variables (Layout.tsx, via brandingCssVars in packages/shared).
- */
+/* Teach (staff app) design tokens. The ONLY place colours, fonts, radii and layers are defined.
+   Same language as the learn site and singyourwayhome.sg: warm greys, ink, one tan accent, Outfit for
+   headings, Geist for text, light grain. Dials: variance 3, motion 2, density 6 (a desktop work tool
+   used all day, so tighter than learn).
+   Shape rule: buttons and nav are pills; cards are 16px; inputs are 10px; tags and small labels are 6px.
+   A school's branding contributes its logo and name only; the app chrome stays LessonKaki's. */
+
+@font-face { font-family: "Outfit"; src: url("../assets/fonts/outfit-latin-var.woff2") format("woff2"); font-weight: 400 700; font-display: swap; }
+@font-face { font-family: "Geist"; src: url("../assets/fonts/geist-latin-var.woff2") format("woff2"); font-weight: 400 600; font-display: swap; }
+
 :root {
-  /* Brand (replace with the studio's palette, fonts and logo) */
-  --brand-primary: #4338ca;
-  --brand-primary-hover: #3730a3;
-  --brand-on-primary: #ffffff;
-  --brand-accent: #db2777;
-  --brand-logo: none; /* e.g. url('/brand/logo.svg') */
-  --brand-logo-width: 28px;
-  --brand-logo-height: 28px;
-  --brand-logo-bg: var(--brand-primary);
-  --radius-button: 6px;
-  --font-body: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --font-display: var(--font-body);
+  color-scheme: light;
+  --bg: #f4f4f2;
+  --surface: #eaeae6;
+  --raised: #fbfbf9;
+  --hover: #f0f0ec;
+  --ink: #161616;
+  --ink-2: #5c5c60;
+  --ink-3: #8a8985;
+  --line: #e0e0db;
+  --line-strong: #cfcfc9;
+  --tan: #c9ad92;
+  --tan-deep: #b99a7c;
+  --tan-soft: #ece3d8;
+  --on-tan: #161616;
+  --contrast-bg: #161616;
+  --contrast-fg: #f4f4f2;
+  --ok-bg: #e3ebdf; --ok-fg: #2f5a2c; --ok-line: #6f9a68;
+  --warn-bg: #f4e2d6; --warn-fg: #8a3a12; --warn-line: #c9784b;
+  --due-bg: #efe4d3; --due-fg: #6b4a1d;
+  --muted-bg: #e7e7e3; --muted-fg: #5c5c60;
+  --danger: #a3361b;
+  --danger-bg: #f6e0d9;
+  --focus: #161616;
+  --scrim: rgb(22 22 22 / 0.32);
+  --shadow-pop: 0 1px 0 var(--line), 0 24px 48px -28px rgb(60 48 36 / 0.35);
+  --grain-opacity: 0.03;
+  --grain-blend: multiply;
 
-  /* Neutrals */
-  --color-bg: #f7f7f9;
-  --color-surface: #ffffff;
-  --color-text: #1c1d22;
-  --color-muted: #6b6f7b;
-  --color-border: #e3e4e8;
-  --color-row-hover: #f4f4f8;
+  --font-display: "Outfit", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-body: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
 
-  /* Status */
-  --color-success: #15803d;
-  --color-success-bg: #dcfce7;
-  --color-warning: #b45309;
-  --color-warning-bg: #fef3c7;
-  --color-danger: #b91c1c;
-  --color-danger-bg: #fee2e2;
-  --color-info-bg: #e0e7ff;
+  --r-pill: 999px; --r-card: 16px; --r-input: 10px; --r-label: 6px;
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px; --space-7: 48px;
+  --text-xs: 0.78rem; --text-sm: 0.875rem; --text-base: 0.95rem;
+  --control-h: 38px; --control-h-sm: 32px;
+  --wrap: 1180px;
+  --gutter: 16px;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --z-bar: 40; --z-modal: 50; --z-grain: 60; --z-skip: 70;
+}
 
-  /* Shape and rhythm */
-  --radius-sm: 6px;
-  --radius: 10px;
-  --shadow: 0 1px 2px rgb(16 24 40 / 6%), 0 1px 3px rgb(16 24 40 / 8%);
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 24px;
-  --space-6: 32px;
-  --text-sm: 0.875rem;
-  --text-base: 1rem;
-  --text-lg: 1.25rem;
-  --text-xl: 1.6rem;
-  --content-width: 1100px;
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #131313;
+    --surface: #1d1d1c;
+    --raised: #1a1a19;
+    --hover: #222221;
+    --ink: #ecebe7;
+    --ink-2: #a8a6a1;
+    --ink-3: #7a7873;
+    --line: #2b2b29;
+    --line-strong: #3a3a37;
+    --tan: #cdb398;
+    --tan-deep: #dcc6ae;
+    --tan-soft: #2a2520;
+    --on-tan: #161616;
+    --contrast-bg: #ecebe7;
+    --contrast-fg: #161616;
+    --ok-bg: #22301f; --ok-fg: #a9cfa0; --ok-line: #6f9a68;
+    --warn-bg: #3a2418; --warn-fg: #f0b392; --warn-line: #c9784b;
+    --due-bg: #33291c; --due-fg: #e5c79a;
+    --muted-bg: #262625; --muted-fg: #a8a6a1;
+    --danger: #f08a6c;
+    --danger-bg: #3a1f17;
+    --focus: #ecebe7;
+    --scrim: rgb(0 0 0 / 0.55);
+    --shadow-pop: 0 0 0 1px var(--line), 0 24px 48px -24px rgb(0 0 0 / 0.6);
+    --grain-opacity: 0.045;
+    --grain-blend: screen;
+  }
+}
+
+@media (min-width: 768px) {
+  :root { --gutter: 32px; }
 }

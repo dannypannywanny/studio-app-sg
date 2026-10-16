@@ -10,12 +10,13 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { onDocumentCreated, onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { defineSecret } from 'firebase-functions/params';
 import { z } from 'zod';
-import { LESSON_MODES, ROLES, WEEKDAYS, isWallDate, isWallTime } from '@lessonkaki/shared';
+import { HOLIDAY_COUNTRIES, LESSON_MODES, ROLES, WEEKDAYS, isWallDate, isWallTime, type HolidayCountry } from '@lessonkaki/shared';
 import * as alerts from './alerts';
 import { requireRole } from './auth';
 import * as attendance from './attendance';
 import * as booking from './booking';
 import * as checkout from './checkout';
+import * as holidays from './holidays';
 import * as credits from './credits';
 import * as lessons from './lessons';
 import * as invoicePdf from './invoicePdf';
@@ -171,6 +172,12 @@ export const addAttendee = onCall(async (req) => {
   return attendance.addAttendee(db(), input, actor);
 });
 
+export const setAttendeePackage = onCall(async (req) => {
+  const input = parse(Attendee.extend({ enrolmentId: id.nullable() }), req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
+  return attendance.setAttendeePackage(db(), input, actor);
+});
+
 export const removeAttendee = onCall(async (req) => {
   const input = parse(Attendee, req.data);
   const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
@@ -190,6 +197,9 @@ const SellPackage = z.object({
   studentId: id,
   packageId: id,
   idempotencyKey: z.string().min(8).max(100).regex(/^[A-Za-z0-9_-]+$/),
+  validUntil: z.string().refine(isWallDate).nullable().optional(),
+  discount: z.object({ kind: z.enum(['percent', 'amount']), value: z.number().min(0).max(100_000_000) }).nullable().optional(),
+  note: z.string().max(1000).nullable().optional(),
 });
 
 export const sellPackage = onCall(async (req) => {
@@ -267,6 +277,22 @@ export const recordPayment = onCall(async (req) => {
   const input = parse(RecordPayment, req.data);
   const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
   return money.recordPayment(db(), { ...input, paidAt: input.paidAt ? new Date(input.paidAt) : undefined }, actor);
+});
+
+const EditInvoice = z.object({
+  schoolId: id,
+  invoiceId: id,
+  number: z.string().max(40).optional(),
+  dueDate: z.string().refine(isWallDate).optional(),
+  discount: z.object({ kind: z.enum(['percent', 'amount']), value: z.number().min(0).max(100_000_000) }).nullable().optional(),
+  validUntil: z.string().refine(isWallDate).nullable().optional(),
+  note: z.string().max(2000).nullable().optional(),
+});
+
+export const editInvoice = onCall(async (req) => {
+  const input = parse(EditInvoice, req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
+  return money.editInvoice(db(), input, actor);
 });
 
 const VoidInvoice = z.object({
@@ -444,4 +470,32 @@ export const signUpStudent = onCall({ secrets: [RESEND_API_KEY] }, async (req) =
   const key = RESEND_API_KEY.value();
   await signup.signUpStudent(db(), getAuth(), key ? alerts.resendSender(key) : null, { ...input, host: new URL(origin).hostname }, { defaultFrom: DEFAULT_ALERT_FROM });
   return { ok: true };
+});
+
+// The 6-digit code from the same email, typed on the page that asked for it. Returns a custom token.
+const VerifySignInCode = z.object({ email: z.email().max(200), code: z.string().regex(/^\s*\d{3}\s?\d{3}\s*$/) });
+
+export const verifySignInCode = onCall(async (req) => {
+  const input = parse(VerifySignInCode, req.data);
+  const origin = req.rawRequest.headers.origin;
+  if (!origin) throw new HttpsError('invalid-argument', 'Open the sign-in page in a browser');
+  const token = await signInLinks.verifySignInCode(db(), getAuth(), { ...input, host: new URL(origin).hostname });
+  return { token };
+});
+
+const SetHolidays = z.object({
+  schoolId: id,
+  country: z.enum(Object.keys(HOLIDAY_COUNTRIES) as [HolidayCountry, ...HolidayCountry[]]).nullable(),
+  closed: z.boolean(),
+});
+
+export const setHolidays = onCall(async (req) => {
+  const input = parse(SetHolidays, req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner']);
+  return holidays.setHolidays(db(), input, actor);
+});
+
+export const refreshHolidays = onSchedule({ ...JOB, schedule: '0 3 1 * *' }, async () => {
+  const res = await holidays.refreshAllHolidays(db());
+  console.log(`refreshHolidays: ${res.updated} schools`);
 });

@@ -1,53 +1,40 @@
-import { useEffect } from 'react';
 import { NavLink, Outlet } from 'react-router';
-import { brandingCssVars, googleFontsHref, safeHttpsUrl, type Branding } from '@lessonkaki/shared';
+import { safeHttpsUrl, type Branding } from '@lessonkaki/shared';
+import { LessonSheet } from './components/LessonSheet';
 import { auth } from './firebase';
 import { useSchool } from './hooks';
 import { useSession } from './session';
 
-/** Applies a school's branding over the tokens.css defaults (and removes it again on change). */
-function useBranding(branding: Branding | null | undefined) {
-  useEffect(() => {
-    const root = document.documentElement;
-    const vars = brandingCssVars(branding);
-    if (vars['--brand-logo']) Object.assign(vars, { '--brand-logo-bg': 'transparent', '--brand-logo-width': '44px', '--brand-logo-height': '44px' });
-    for (const [k, v] of Object.entries(vars)) root.style.setProperty(k, v);
-    const href = googleFontsHref(branding);
-    let link = document.getElementById('brand-fonts') as HTMLLinkElement | null;
-    if (href) {
-      if (!link) {
-        link = Object.assign(document.createElement('link'), { id: 'brand-fonts', rel: 'stylesheet' });
-        document.head.appendChild(link);
-      }
-      link.href = href;
-    }
-    return () => {
-      for (const k of Object.keys(vars)) root.style.removeProperty(k);
-      link?.remove();
-    };
-  }, [JSON.stringify(branding ?? null)]); // eslint-disable-line react-hooks/exhaustive-deps
-}
-
+// The staff app keeps LessonKaki's own design (tokens.css). A school's branding supplies its logo and name only.
 export function Layout() {
   const { user, role } = useSession();
   const school = useSchool().data;
-  useBranding(school?.branding as Branding | undefined);
-  const siteUrl = safeHttpsUrl((school?.branding as Branding | undefined)?.siteUrl);
+  const branding = school?.branding as Branding | undefined;
+  const logo = safeHttpsUrl(branding?.logoUrl);
+  const siteUrl = safeHttpsUrl(branding?.siteUrl);
   const isStaff = role === 'owner' || role === 'admin';
+  const name = school?.name ?? 'LessonKaki';
+  const brand = (
+    <>
+      {logo && <img className="brand-logo" src={logo} alt="" />}
+      <span className="brand-name">{name}</span>
+    </>
+  );
 
   return (
     <div className="shell">
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
       <header className="topbar">
-        {/* Brand slot: the school's logo (branding.logoPath, or --brand-logo in tokens.css) sits here. */}
-        <div className="brand">
-          {siteUrl ? (
-            <a className="brand-logo" href={siteUrl} target="_blank" rel="noopener" aria-label={`${school?.name} website`} />
-          ) : (
-            <span className="brand-logo" aria-hidden="true" />
-          )}
-          <span className="brand-name">{school?.name ?? 'LessonKaki'}</span>
-        </div>
-        <nav className="nav">
+        {siteUrl ? (
+          <a className="brand" href={siteUrl} target="_blank" rel="noopener" aria-label={`${name} website`}>
+            {brand}
+          </a>
+        ) : (
+          <span className="brand">{brand}</span>
+        )}
+        <nav className="nav" aria-label="Main">
           <NavLink to="/" end>
             Today
           </NavLink>
@@ -61,17 +48,19 @@ export function Layout() {
           {isStaff && <NavLink to="/settings">Settings</NavLink>}
         </nav>
         <div className="account">
-          <span className="muted">
-            {user?.email} · {role}
+          <span className="account-who">
+            <span className="account-email">{user?.email}</span>
+            <span className="account-role">{role}</span>
           </span>
-          <button className="btn btn-ghost" onClick={() => auth.signOut()}>
+          <button className="btn btn-sm" onClick={() => auth.signOut()}>
             Sign out
           </button>
         </div>
       </header>
-      <main className="content">
+      <main id="main" className="content">
         <Outlet />
       </main>
+      <LessonSheet />
     </div>
   );
 }

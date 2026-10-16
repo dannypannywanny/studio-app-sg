@@ -26,6 +26,15 @@ export interface HoursException {
   ranges?: { start: string; end: string; inPerson?: boolean; online?: boolean; locationId?: string | null }[];
 }
 
+/** Time the teacher has blocked off on one date (wall clock); end '24:00' = to the end of the day. */
+export interface TimeOff {
+  id: string;
+  date: string;
+  start: string;
+  end: string;
+  note?: string | null;
+}
+
 /** `schools/{s}/availability/{teacherId}`. Missing numbers fall back to AVAILABILITY_DEFAULTS. */
 export interface Availability {
   /** false hides the teacher from booking without deleting the hours. */
@@ -34,6 +43,8 @@ export interface Availability {
   subjectId?: string | null;
   weekly: WeeklyHours[];
   exceptions?: HoursException[];
+  /** Blocked time: never offered for booking. */
+  timeOff?: TimeOff[];
   /** Length of a booked lesson. */
   lessonMin?: number;
   /** Slots start every `stepMin` from the start of each block. */
@@ -117,8 +128,14 @@ export function resolveAvailability(raw: unknown): ResolvedAvailability {
     );
     return [{ date: e.date, closed: ranges.length === 0, ranges }];
   });
+  const timeOff: TimeOff[] = records(doc.timeOff).flatMap((t) =>
+    typeof t.id === 'string' && typeof t.date === 'string' && isWallDate(t.date) && okRange(t.start, t.end)
+      ? [{ id: t.id, date: t.date, start: t.start as string, end: t.end as string, note: typeof t.note === 'string' ? t.note : null }]
+      : [],
+  );
   return {
     bookable: doc.bookable !== false,
+    timeOff,
     subjectId: typeof doc.subjectId === 'string' && doc.subjectId ? doc.subjectId : null,
     weekly,
     exceptions,
@@ -151,6 +168,8 @@ export interface SlotQuery {
   /** Optional narrower window (still clipped to notice and horizon). */
   from?: Date;
   to?: Date;
+  /** Wall dates with no slots at all (public holidays the school is closed on). */
+  closedDates?: ReadonlySet<string>;
 }
 
 const MIN_MS = 60_000;
@@ -174,6 +193,12 @@ export function hoursOn(av: ResolvedAvailability, date: string): Block[] {
   return av.weekly.filter((w) => w.day === day);
 }
 
+/** A time-off entry as a UTC interval. */
+export function timeOffInterval(t: TimeOff, timeZone: string): BusyInterval {
+  const end = t.end === '24:00' ? wallClockToUtc(addDays(t.date, 1), '00:00', timeZone) : wallClockToUtc(t.date, t.end, timeZone);
+  return { startMs: wallClockToUtc(t.date, t.start, timeZone).getTime(), endMs: end.getTime() };
+}
+
 /** Open slots, sorted by start. A start offered by two blocks merges their modes. */
 export function openSlots(av: ResolvedAvailability, q: SlotQuery): Slot[] {
   if (!av.bookable) return [];
@@ -183,11 +208,16 @@ export function openSlots(av: ResolvedAvailability, q: SlotQuery): Slot[] {
   if (fromMs > toMs) return [];
   const lessonMs = av.lessonMin * MIN_MS;
   const bufferMs = av.bufferMin * MIN_MS;
-  const free = (start: number, end: number) => !q.busy.some((b) => b.startMs < end + bufferMs && b.endMs > start - bufferMs);
+  // Time off blocks exactly its own span; lessons also keep the buffer around them.
+  const off = av.timeOff.map((t) => timeOffInterval(t, q.timeZone));
+  const free = (start: number, end: number) =>
+    !q.busy.some((b) => b.startMs < end + bufferMs && b.endMs > start - bufferMs) &&
+    !off.some((b) => b.startMs < end && b.endMs > start);
 
   const byStart = new Map<number, Slot>();
   const lastDate = wallDateOf(new Date(toMs), q.timeZone);
   for (let date = wallDateOf(new Date(fromMs), q.timeZone); date <= lastDate; date = addDays(date, 1)) {
+    if (q.closedDates?.has(date)) continue;
     for (const block of hoursOn(av, date)) {
       const endMin = toMinutes(block.end);
       for (let m = toMinutes(block.start); m + av.lessonMin <= endMin; m += av.stepMin) {

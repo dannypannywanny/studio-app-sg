@@ -281,3 +281,37 @@ describe('mergeClaims', () => {
     });
   });
 });
+
+describe('sellPackage options', () => {
+  it('names the line by subject and teacher, and applies expiry, % discount and a note', async () => {
+    const { sellPackage } = await import('../src/credits');
+    const t = await school();
+    await db.doc(`schools/${t.schoolId}/subjects/${t.subjectId}`).set({ name: 'Voice lessons', teacherIds: [t.teacherId] }, { merge: true });
+    await db.doc(`schools/${t.schoolId}/teachers/${t.teacherId}`).set({ displayName: 'Daniel Lee' }, { merge: true });
+    await db.doc(`schools/${t.schoolId}/packages/${t.pkg30}`).set({ subjectId: t.subjectId }, { merge: true });
+    const res = await sellPackage(
+      db,
+      { schoolId: t.schoolId, studentId: t.studentId, packageId: t.pkg30, idempotencyKey: 'opts-key-1', validUntil: '2030-06-30', discount: { kind: 'percent', value: 10 }, note: 'Paid by mum' },
+      owner,
+    );
+    const inv = (await db.doc(`schools/${t.schoolId}/invoices/${res.invoiceId}`).get()).data()!;
+    expect(inv.lines[0].desc).toBe('Voice lessons with Daniel · 4 lessons');
+    expect(inv).toMatchObject({ subtotalCents: 30000, discountCents: 3000, totalCents: 27000, pendingCents: 27000, note: 'Paid by mum' });
+    const l = await lot(t, res.enrolmentId);
+    expect(l.validUntil.toDate().toISOString()).toBe('2030-06-30T15:59:59.999Z');
+    expect(l.note).toBe('Paid by mum');
+  });
+
+  it('an amount discount, no expiry', async () => {
+    const { sellPackage } = await import('../src/credits');
+    const t = await school();
+    const res = await sellPackage(
+      db,
+      { schoolId: t.schoolId, studentId: t.studentId, packageId: t.pkg30, idempotencyKey: 'opts-key-2', validUntil: null, discount: { kind: 'amount', value: 5000 } },
+      owner,
+    );
+    const inv = (await db.doc(`schools/${t.schoolId}/invoices/${res.invoiceId}`).get()).data()!;
+    expect(inv).toMatchObject({ discountCents: 5000, totalCents: 25000 });
+    expect((await lot(t, res.enrolmentId)).validUntil.toDate().getUTCFullYear()).toBeGreaterThan(2900);
+  });
+});
