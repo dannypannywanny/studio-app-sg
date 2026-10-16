@@ -6,7 +6,7 @@ import { Calendar } from './pages/Calendar';
 import { Dashboard } from './pages/Dashboard';
 import { ImportStudents } from './pages/ImportStudents';
 import { Packages } from './pages/Packages';
-import { Reports } from './pages/Reports';
+import { Reports } from './pages/ReportsHome';
 import { Settings } from './pages/Settings';
 import { Staff } from './pages/Staff';
 import { InvoiceDetail } from './pages/InvoiceDetail';

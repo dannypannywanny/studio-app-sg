@@ -122,6 +122,91 @@ function EditInvoice({ inv, onDone }: { inv: Invoice & { id: string }; onDone: (
   );
 }
 
+const issueCreditNote = call<
+  {
+    schoolId: string;
+    invoiceId: string;
+    amountCents: number;
+    reason: string;
+    excess: 'credit' | 'refund';
+    refundMethod: 'paynow' | 'bank' | 'cash' | null;
+    idempotencyKey: string;
+  },
+  { number: string; excessCents: number }
+>('issueCreditNote');
+
+function CreditNoteForm({ inv, onDone }: { inv: Invoice & { id: string }; onDone: (msg: string | null) => void }) {
+  const schoolId = useSchoolId();
+  const [amount, setAmount] = useState('');
+  const [reason, setReason] = useState('');
+  const [excess, setExcess] = useState<'credit' | 'refund'>('credit');
+  const [method, setMethod] = useState<'paynow' | 'bank' | 'cash'>('paynow');
+  const [key] = useState(() => crypto.randomUUID());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const cents = parseMoney(amount) ?? 0;
+  const over = Math.max(0, inv.paidCents - (inv.totalCents - cents));
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (cents <= 0) return setError('Enter an amount.');
+    if (cents > inv.totalCents) return setError(`At most ${formatMoney(inv.totalCents, inv.currency)}.`);
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await issueCreditNote({ schoolId, invoiceId: inv.id, amountCents: cents, reason, excess, refundMethod: excess === 'refund' ? method : null, idempotencyKey: key });
+      onDone(
+        `Credit note ${res.number} for ${formatMoney(cents, inv.currency)}.` +
+          (res.excessCents ? (excess === 'credit' ? ` ${formatMoney(res.excessCents, inv.currency)} kept as credit for the student.` : ` Refund of ${formatMoney(res.excessCents, inv.currency)} recorded.`) : ''),
+      );
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="card form-grid" onSubmit={submit}>
+      <h2 className="span-all">Credit note / refund</h2>
+      <label className="field">
+        <span>Amount to take off</span>
+        <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" required />
+      </label>
+      <label className="field span-all">
+        <span>Reason</span>
+        <input value={reason} onChange={(e) => setReason(e.target.value)} minLength={3} maxLength={300} required placeholder="e.g. Lesson cancelled by the studio" />
+      </label>
+      {over > 0 && (
+        <fieldset className="field span-all">
+          <legend>
+            {formatMoney(over, inv.currency)} has already been paid above the new total. What happens to it?
+          </legend>
+          <label className="row">
+            <input type="radio" checked={excess === 'credit'} onChange={() => setExcess('credit')} /> Keep it as credit for the student (used on their next invoice)
+          </label>
+          <label className="row">
+            <input type="radio" checked={excess === 'refund'} onChange={() => setExcess('refund')} /> Refunded to the student by
+            <select value={method} onChange={(e) => setMethod(e.target.value as typeof method)} disabled={excess !== 'refund'} aria-label="Refund method">
+              <option value="paynow">PayNow</option>
+              <option value="bank">Bank transfer</option>
+              <option value="cash">Cash</option>
+            </select>
+          </label>
+        </fieldset>
+      )}
+      <div className="form-actions">
+        <button className="btn btn-primary" disabled={busy}>
+          {busy ? 'Saving…' : 'Issue credit note'}
+        </button>
+        <button type="button" className="btn btn-ghost" onClick={() => onDone(null)}>
+          Cancel
+        </button>
+        {error && <p className="error">{error}</p>}
+      </div>
+    </form>
+  );
+}
+
 interface RecordPaymentResult {
   invoiceStatus: string;
   appliedCents: number;
@@ -382,6 +467,7 @@ export function InvoiceDetail() {
   const [paying, setPaying] = useState(false);
   const [voiding, setVoiding] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [crediting, setCrediting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   if (invoice.loading) return <p className="muted">Loading…</p>;
@@ -414,6 +500,11 @@ export function InvoiceDetail() {
               Edit
             </button>
           )}
+          {inv.status !== 'void' && inv.totalCents > 0 && !crediting && (
+            <button className="btn" onClick={() => setCrediting(true)}>
+              Credit / refund
+            </button>
+          )}
           {open && (
             <button className="btn btn-primary" onClick={() => setPaying(true)}>
               Record payment
@@ -430,6 +521,15 @@ export function InvoiceDetail() {
         <p className="success" role="status">
           {notice}
         </p>
+      )}
+      {crediting && (
+        <CreditNoteForm
+          inv={inv}
+          onDone={(msg) => {
+            setCrediting(false);
+            if (msg) setNotice(msg);
+          }}
+        />
       )}
       {editing && (
         <EditInvoice
@@ -515,7 +615,10 @@ export function InvoiceDetail() {
               {sortedPayments.map((p) => (
                 <tr key={p.id}>
                   <td>{formatDate(p.paidAt.toDate(), tz)}</td>
-                  <td>{METHOD_LABEL[p.method]}</td>
+                  <td>
+                    {METHOD_LABEL[p.method]}
+                    {p.status === 'refund' && <span className="badge badge-warn">Refund</span>}
+                  </td>
                   <td>{p.reference ?? '—'}</td>
                   <td className="num">
                     {formatMoney(p.amountCents, inv.currency)}

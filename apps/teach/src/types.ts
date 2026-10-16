@@ -97,6 +97,8 @@ export interface Invoice {
   subtotalCents: number;
   discountCents: number;
   moneyCreditAppliedCents?: number;
+  /** Total of credit notes on this invoice. */
+  creditedCents?: number;
   totalCents: number;
   paidCents: number;
   pendingCents: number;

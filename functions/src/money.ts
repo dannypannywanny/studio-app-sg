@@ -334,7 +334,7 @@ export async function editInvoice(db: Firestore, input: EditInvoiceInput, actor:
       const discountCents = !d
         ? 0
         : Math.min(subtotal, Math.max(0, d.kind === 'percent' ? Math.round((subtotal * Math.min(d.value, 100)) / 100) : Math.round(d.value)));
-      const credit = (inv.moneyCreditAppliedCents as number | undefined) ?? 0;
+      const credit = ((inv.moneyCreditAppliedCents as number | undefined) ?? 0) + ((inv.creditedCents as number | undefined) ?? 0);
       const total = Math.max(0, subtotal - discountCents - credit);
       const paid = (inv.paidCents as number | undefined) ?? 0;
       if (total < paid) {
@@ -376,5 +376,116 @@ export async function editInvoice(db: Firestore, input: EditInvoiceInput, actor:
     if (Object.keys(update).length) tx.update(invoiceRef, { ...update, updatedAt: now() });
     audit(tx, school, actor, 'editInvoice', `invoices/${input.invoiceId}`, { changed });
     return { changed };
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// issueCreditNote: take an amount off an invoice (refund / goodwill). If the student has already paid more
+// than the new total, the difference becomes money credit (moneyLedger 'creditNote') or a recorded refund
+// (a payments doc with status 'refund' and a negative amount).
+// ---------------------------------------------------------------------------------------------
+
+export interface CreditNoteInput {
+  schoolId: string;
+  invoiceId: string;
+  amountCents: number;
+  reason: string;
+  /** What happens to money already paid above the new total. */
+  excess: 'credit' | 'refund';
+  refundMethod?: PaymentMethod | null;
+  idempotencyKey: string;
+}
+
+export async function issueCreditNote(db: Firestore, input: CreditNoteInput, actor: Actor, at: Date = new Date()) {
+  const reason = input.reason.trim();
+  if (!reason) throw new HttpsError('invalid-argument', 'Give a reason for the credit note');
+  if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) throw new HttpsError('invalid-argument', 'The amount must be positive');
+  const school = schoolRef(db, input.schoolId);
+  const idemRef = school.collection('idempotency').doc(`creditNote_${input.idempotencyKey}`);
+  const invoiceRef = school.collection('invoices').doc(input.invoiceId);
+  const counterRef = school.collection('counters').doc('creditNote');
+
+  return db.runTransaction(async (tx) => {
+    const [idem, invSnap, counterSnap] = await readAll(tx, idemRef, invoiceRef, counterRef);
+    if (idem.exists) return idem.get('result') as { creditNoteId: string; number: string; excessCents: number };
+    if (!invSnap.exists) notFound('Invoice');
+    const inv = invSnap.data()!;
+    if (inv.status === 'void') throw new HttpsError('failed-precondition', 'This invoice is void');
+    const total = inv.totalCents as number;
+    if (input.amountCents > total) throw new HttpsError('invalid-argument', 'The credit is more than the invoice total');
+    const paid = (inv.paidCents as number | undefined) ?? 0;
+    const newTotal = total - input.amountCents;
+    const excess = Math.max(0, paid - newTotal);
+    const newPaid = paid - excess;
+    const pending = newTotal - newPaid;
+    const studentId = inv.studentId as string;
+    const n = counterSnap.exists ? (counterSnap.get('next') as number) : 1;
+    const number = `CN-${String(n).padStart(5, '0')}`;
+
+    // ---- writes ----
+    tx.set(counterRef, { next: n + 1, updatedAt: now() });
+    const cnRef = school.collection('creditNotes').doc();
+    tx.create(cnRef, {
+      number,
+      invoiceId: input.invoiceId,
+      invoiceNumber: inv.number,
+      studentId,
+      amountCents: input.amountCents,
+      reason,
+      excess: excess ? input.excess : null,
+      excessCents: excess,
+      createdBy: actor.uid,
+      createdAt: now(),
+    });
+    tx.update(invoiceRef, {
+      creditedCents: ((inv.creditedCents as number | undefined) ?? 0) + input.amountCents,
+      totalCents: newTotal,
+      paidCents: newPaid,
+      pendingCents: pending,
+      status: pending === 0 ? 'paid' : newPaid > 0 ? 'partial' : 'sent',
+      ...(pending === 0 ? { overdueSince: null, paidAt: inv.paidAt ?? Timestamp.fromDate(at) } : {}),
+      updatedAt: now(),
+    });
+    const ct = new CreditTx(tx, school, actor, at);
+    if (excess && input.excess === 'credit') {
+      tx.create(school.collection('moneyLedger').doc(), {
+        studentId,
+        deltaCents: excess,
+        type: 'creditNote',
+        invoiceId: input.invoiceId,
+        paymentId: null,
+        creditNoteId: cnRef.id,
+        reason,
+        actorUid: actor.uid,
+        idempotencyKey: `creditNote:${input.idempotencyKey}:excess`,
+        createdAt: now(),
+      });
+    }
+    if (excess && input.excess === 'refund') {
+      tx.create(school.collection('payments').doc(), {
+        invoiceId: input.invoiceId,
+        invoiceNumber: inv.number,
+        studentId,
+        amountCents: -excess,
+        appliedCents: -excess,
+        overpaymentCents: 0,
+        currency: inv.currency ?? 'SGD',
+        method: input.refundMethod ?? 'paynow',
+        reference: number,
+        gatewayRef: null,
+        status: 'refund',
+        refundCents: excess,
+        paidAt: Timestamp.fromDate(at),
+        recordedBy: actor.uid,
+        idempotencyKey: `creditNote:${input.idempotencyKey}`,
+        createdAt: now(),
+      });
+    }
+    ct.bump(studentId, { outstandingCents: pending - (inv.pendingCents as number), moneyCreditCents: excess && input.excess === 'credit' ? excess : 0 });
+    ct.flush();
+    const result = { creditNoteId: cnRef.id, number, excessCents: excess };
+    tx.create(idemRef, { invoiceId: input.invoiceId, result, actorUid: actor.uid, createdAt: now() });
+    audit(tx, school, actor, 'issueCreditNote', `invoices/${input.invoiceId}`, { number, amountCents: input.amountCents, excess, mode: input.excess });
+    return result;
   });
 }

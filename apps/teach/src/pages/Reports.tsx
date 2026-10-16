@@ -21,7 +21,7 @@ type Days = keyof typeof PERIODS;
 
 const pct = (rate: number | null) => (rate === null ? '—' : `${Math.round(rate * 100)}%`);
 
-export function Reports() {
+export function AttendanceReport() {
   const schoolId = useSchoolId();
   const tz = useTimeZone();
   const students = useStudents();
@@ -79,7 +79,7 @@ export function Reports() {
   return (
     <section className="stack">
       <div className="page-head">
-        <h1>Attendance</h1>
+        <h2>Attendance</h2>
         <select value={days} onChange={(e) => setDays(Number(e.target.value) as Days)} aria-label="Period">
           {Object.entries(PERIODS).map(([d, label]) => (
             <option key={d} value={d}>

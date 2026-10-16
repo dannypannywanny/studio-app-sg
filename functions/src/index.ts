@@ -300,6 +300,22 @@ export const editInvoice = onCall(async (req) => {
   return money.editInvoice(db(), input, actor);
 });
 
+const CreditNote = z.object({
+  schoolId: id,
+  invoiceId: id,
+  amountCents: z.number().int().positive().max(100_000_000),
+  reason: z.string().trim().min(3).max(300),
+  excess: z.enum(['credit', 'refund']),
+  refundMethod: z.enum(['paynow', 'bank', 'cash']).nullable().optional(),
+  idempotencyKey: Key,
+});
+
+export const issueCreditNote = onCall(async (req) => {
+  const input = parse(CreditNote, req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
+  return money.issueCreditNote(db(), input, actor);
+});
+
 const VoidInvoice = z.object({
   schoolId: id,
   invoiceId: id,
