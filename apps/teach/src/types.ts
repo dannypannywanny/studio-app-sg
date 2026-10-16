@@ -97,6 +97,8 @@ export interface Invoice {
   subtotalCents: number;
   discountCents: number;
   moneyCreditAppliedCents?: number;
+  /** Total of credit notes on this invoice. */
+  creditedCents?: number;
   totalCents: number;
   paidCents: number;
   pendingCents: number;
@@ -151,5 +153,7 @@ export interface Attendee {
   ledgerEntryId: string | null;
   /** Package staff chose to pay for this lesson (null = earliest expiry). */
   preferredEnrolmentId?: string | null;
+  /** Note for the student about this lesson (shown in the learn portal). */
+  sharedNote?: string | null;
   markedAt: Ts | null;
 }

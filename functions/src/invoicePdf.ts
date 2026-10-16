@@ -47,6 +47,7 @@ export interface InvoicePdfData {
     lines: { desc: string; qty: number; unitCents: number }[];
     subtotalCents: number;
     discountCents: number;
+    creditedCents?: number;
     totalCents: number;
     paidCents: number;
     pendingCents: number;
@@ -277,6 +278,7 @@ export async function renderInvoicePdf(d: InvoicePdfData, assets: PdfAssets = {}
   const tx = W - M - 230;
   const rows: [string, string][] = [['Subtotal', money(d.invoice.subtotalCents)]];
   if (d.invoice.discountCents) rows.push(['Discount', `-${money(d.invoice.discountCents)}`]);
+  if (d.invoice.creditedCents) rows.push(['Credit note', `-${money(d.invoice.creditedCents)}`]);
   rows.push(['Total', money(d.invoice.totalCents)]);
   if (d.invoice.paidCents) rows.push(['Paid', `-${money(d.invoice.paidCents)}`]);
   y -= 6;
@@ -425,6 +427,7 @@ export async function loadInvoicePdfData(db: Firestore, schoolId: string, invoic
       lines: inv.lines,
       subtotalCents: inv.subtotalCents ?? inv.totalCents,
       discountCents: inv.discountCents ?? 0,
+      creditedCents: inv.creditedCents ?? 0,
       totalCents: inv.totalCents,
       paidCents: inv.paidCents ?? 0,
       pendingCents: pending,

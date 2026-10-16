@@ -351,3 +351,5 @@ button { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+.hist { flex-wrap: wrap; }
+.hist-note { flex-basis: 100%; margin-top: 6px; padding: 10px 14px; border-radius: 14px; background: var(--surface); color: var(--ink); font-size: 0.93rem; white-space: pre-wrap; }

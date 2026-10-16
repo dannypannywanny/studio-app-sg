@@ -43,7 +43,7 @@ export function Layout() {
           <NavLink to="/lessons">Lessons</NavLink>
           <NavLink to="/invoices">Invoices</NavLink>
           <NavLink to="/packages">Packages</NavLink>
-          <NavLink to="/reports">Attendance</NavLink>
+          <NavLink to="/reports">Reports</NavLink>
           {isStaff && <NavLink to="/staff">Staff</NavLink>}
           {isStaff && <NavLink to="/settings">Settings</NavLink>}
         </nav>

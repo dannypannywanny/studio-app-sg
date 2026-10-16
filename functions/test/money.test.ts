@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { setAttendance } from '../src/attendance';
-import { editInvoice, markOverdue, recordPayment, voidInvoice, type PaymentMethod } from '../src/money';
+import { editInvoice, issueCreditNote, markOverdue, recordPayment, voidInvoice, type PaymentMethod } from '../src/money';
 import { DAY, db, ledger, lesson, lot, money, owner, sell, summary, withInvariant, type TestSchool } from './helpers';
 
 const school = withInvariant();
@@ -162,5 +162,41 @@ describe('editInvoice', () => {
     const sale = await sell(t, t.pkg30);
     await edit(t, sale.invoiceId, { validUntil: '2031-03-15' });
     expect((await lot(t, sale.enrolmentId)).validUntil.toDate().toISOString()).toBe('2031-03-15T15:59:59.999Z');
+  });
+});
+
+describe('issueCreditNote', () => {
+  const credit = (t: TestSchool, invoiceId: string, amountCents: number, excess: 'credit' | 'refund') =>
+    issueCreditNote(db, { schoolId: t.schoolId, invoiceId, amountCents, reason: 'Teacher away', excess, idempotencyKey: randomUUID() }, owner);
+  const inv = async (t: TestSchool, id: string) => (await db.doc(`schools/${t.schoolId}/invoices/${id}`).get()).data()!;
+
+  it('on an unpaid invoice: lowers what is owed', async () => {
+    const t = await school();
+    const sale = await sell(t, t.pkg30);
+    const res = await credit(t, sale.invoiceId, 10000, 'credit');
+    expect(res).toMatchObject({ number: 'CN-00001', excessCents: 0 });
+    expect(await inv(t, sale.invoiceId)).toMatchObject({ totalCents: 20000, pendingCents: 20000, creditedCents: 10000, status: 'sent' });
+    expect((await money(t)).outstandingCents).toBe(20000);
+  });
+
+  it('on a paid invoice: the excess becomes money credit', async () => {
+    const t = await school();
+    const sale = await sell(t, t.pkg30);
+    await recordPayment(db, { schoolId: t.schoolId, invoiceId: sale.invoiceId, amountCents: 30000, method: 'paynow', idempotencyKey: randomUUID() }, owner);
+    const res = await credit(t, sale.invoiceId, 10000, 'credit');
+    expect(res.excessCents).toBe(10000);
+    expect(await inv(t, sale.invoiceId)).toMatchObject({ totalCents: 20000, paidCents: 20000, pendingCents: 0, status: 'paid' });
+    expect(await money(t)).toMatchObject({ outstandingCents: 0, moneyCreditCents: 10000 });
+  });
+
+  it('on a paid invoice: or a recorded refund', async () => {
+    const t = await school();
+    const sale = await sell(t, t.pkg30);
+    await recordPayment(db, { schoolId: t.schoolId, invoiceId: sale.invoiceId, amountCents: 30000, method: 'paynow', idempotencyKey: randomUUID() }, owner);
+    await credit(t, sale.invoiceId, 30000, 'refund');
+    expect(await inv(t, sale.invoiceId)).toMatchObject({ totalCents: 0, paidCents: 0, status: 'paid' });
+    const refunds = await db.collection(`schools/${t.schoolId}/payments`).where('status', '==', 'refund').get();
+    expect(refunds.docs.map((d) => d.get('amountCents'))).toEqual([-30000]);
+    expect(await money(t)).toMatchObject({ outstandingCents: 0, moneyCreditCents: 0 });
   });
 });

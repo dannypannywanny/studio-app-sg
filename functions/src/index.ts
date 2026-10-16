@@ -17,6 +17,7 @@ import * as attendance from './attendance';
 import * as booking from './booking';
 import * as checkout from './checkout';
 import * as holidays from './holidays';
+import * as reminders from './reminders';
 import * as credits from './credits';
 import * as lessons from './lessons';
 import * as invoicePdf from './invoicePdf';
@@ -178,6 +179,12 @@ export const setAttendeePackage = onCall(async (req) => {
   return attendance.setAttendeePackage(db(), input, actor);
 });
 
+export const setLessonNote = onCall(async (req) => {
+  const input = parse(Attendee.extend({ note: z.string().max(4000).nullable() }), req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin', 'teacher']);
+  return attendance.setLessonNote(db(), input, actor);
+});
+
 export const removeAttendee = onCall(async (req) => {
   const input = parse(Attendee, req.data);
   const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
@@ -293,6 +300,22 @@ export const editInvoice = onCall(async (req) => {
   const input = parse(EditInvoice, req.data);
   const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
   return money.editInvoice(db(), input, actor);
+});
+
+const CreditNote = z.object({
+  schoolId: id,
+  invoiceId: id,
+  amountCents: z.number().int().positive().max(100_000_000),
+  reason: z.string().trim().min(3).max(300),
+  excess: z.enum(['credit', 'refund']),
+  refundMethod: z.enum(['paynow', 'bank', 'cash']).nullable().optional(),
+  idempotencyKey: Key,
+});
+
+export const issueCreditNote = onCall(async (req) => {
+  const input = parse(CreditNote, req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
+  return money.issueCreditNote(db(), input, actor);
 });
 
 const VoidInvoice = z.object({
@@ -498,4 +521,19 @@ export const setHolidays = onCall(async (req) => {
 export const refreshHolidays = onSchedule({ ...JOB, schedule: '0 3 1 * *' }, async () => {
   const res = await holidays.refreshAllHolidays(db());
   console.log(`refreshHolidays: ${res.updated} schools`);
+});
+
+// Student reminders (off until the school turns them on in Settings).
+export const sendLessonReminders = onSchedule({ ...JOB, schedule: 'every 60 minutes', secrets: [RESEND_API_KEY] }, async () => {
+  const key = RESEND_API_KEY.value();
+  if (!key) return console.warn('sendLessonReminders: no RESEND_API_KEY');
+  const res = await reminders.runLessonReminders(db(), alerts.resendSender(key), DEFAULT_ALERT_FROM);
+  console.log(`sendLessonReminders: ${res.sent} sent`);
+});
+
+export const sendPaymentReminders = onSchedule({ ...JOB, schedule: 'every day 10:00', secrets: [RESEND_API_KEY] }, async () => {
+  const key = RESEND_API_KEY.value();
+  if (!key) return console.warn('sendPaymentReminders: no RESEND_API_KEY');
+  const res = await reminders.runPaymentReminders(db(), alerts.resendSender(key), DEFAULT_ALERT_FROM);
+  console.log(`sendPaymentReminders: ${res.sent} sent`);
 });
