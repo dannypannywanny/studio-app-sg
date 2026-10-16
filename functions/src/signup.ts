@@ -68,10 +68,8 @@ export async function signUpStudent(
   } catch (err) {
     if ((err as { code?: string }).code !== 'auth/user-not-found') throw err;
   }
-  if (claims.r?.[schoolId]) {
-    await link();
-    return 'existing';
-  }
+  // Already has a login here: tell them to sign in instead (no email sent).
+  if (claims.r?.[schoolId]) return 'existing';
 
   // On file already (e.g. moved from the old system): link that record.
   const onFile = (await school.collection('students').where('email', '==', email).get()).docs.filter((d) => d.get('status') !== 'archived');

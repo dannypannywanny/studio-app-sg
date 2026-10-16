@@ -18,7 +18,14 @@ export function safeNext(raw: string | null): string | null {
 // Production: LessonKaki emails the link from the school's own domain (Firebase's sender lands in spam).
 // The emulator can't send email, so dev keeps Firebase's flow and its "open the link" button.
 const sendSignInLink = call<{ email: string }, { ok: true }>('sendSignInLink');
-const signUpStudent = call<{ firstName: string; lastName: string; email: string; phone: string; consent: true }, { ok: true }>('signUpStudent');
+const signUpStudent = call<{ firstName: string; lastName: string; email: string; phone: string; consent: true }, { existing: boolean }>('signUpStudent');
+
+/** Country codes for the mobile field: Singapore first, then the region, then common others. */
+const DIAL_CODES = [
+  ['+65', 'Singapore'], ['+60', 'Malaysia'], ['+62', 'Indonesia'], ['+63', 'Philippines'], ['+66', 'Thailand'], ['+84', 'Vietnam'],
+  ['+86', 'China'], ['+852', 'Hong Kong'], ['+853', 'Macau'], ['+886', 'Taiwan'], ['+81', 'Japan'], ['+82', 'South Korea'],
+  ['+91', 'India'], ['+61', 'Australia'], ['+64', 'New Zealand'], ['+44', 'United Kingdom'], ['+1', 'US / Canada'],
+] as const;
 // The email also carries a 6-digit code. Typing it here signs in *this* browser, which matters when
 // the mail app opens links in its own built-in browser (the session would stay stuck in there).
 const verifySignInCode = call<{ email: string; code: string }, { token: string }>('verifySignInCode');
@@ -57,7 +64,8 @@ export function SignIn() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<'signIn' | 'signUp'>(() => (new URLSearchParams(window.location.search).has('signup') ? 'signUp' : 'signIn'));
-  const [form, setForm] = useState({ firstName: '', lastName: '', phone: '', consent: false });
+  const [form, setForm] = useState({ firstName: '', lastName: '', dial: '+65', phone: '', consent: false });
+  const [exists, setExists] = useState(false);
   const site = useSiteSchoolId();
   const profile = useProfile(site.schoolId);
   const [code, setCode] = useState('');
@@ -71,7 +79,13 @@ export function SignIn() {
     setError(null);
     try {
       const clean = email.trim().toLowerCase();
-      await signUpStudent({ firstName: form.firstName, lastName: form.lastName, email: clean, phone: form.phone, consent: true });
+      setExists(false);
+      const res = await signUpStudent({ firstName: form.firstName, lastName: form.lastName, email: clean, phone: `${form.dial} ${form.phone.replace(/^0+/, '')}`, consent: true });
+      if (res.existing) {
+        setEmail(clean);
+        setExists(true);
+        return;
+      }
       // The emulator can't send email: ask Firebase for a link the dev button can open.
       if (useEmulators) await sendSignInLinkToEmail(auth, clean, { url: `${window.location.origin}/finish-signin`, handleCodeInApp: true });
       remember(clean);
@@ -208,7 +222,16 @@ export function SignIn() {
           </label>
           <label className="field">
             <span className="field-label">Mobile</span>
-            <input type="tel" required autoComplete="tel" inputMode="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+            <div className="phone-row">
+              <select aria-label="Country code" value={form.dial} onChange={(e) => setForm({ ...form, dial: e.target.value })}>
+                {DIAL_CODES.map(([code, name]) => (
+                  <option key={code} value={code}>
+                    {name} {code}
+                  </option>
+                ))}
+              </select>
+              <input type="tel" required autoComplete="tel-national" inputMode="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+            </div>
             <span className="field-help">So the studio can reach you about your lessons.</span>
           </label>
           <label className="check">
@@ -223,6 +246,14 @@ export function SignIn() {
             {!busy && <ArrowRight size={18} weight="bold" aria-hidden="true" />}
           </button>
           {error && <p className="form-error" role="alert">{error}</p>}
+          {exists && (
+            <div className="notice notice-info" role="alert">
+              <p>You already have an account with this email.</p>
+              <button type="button" className="btn btn-sm" onClick={() => { setMode('signIn'); setExists(false); setError(null); }}>
+                Sign in instead
+              </button>
+            </div>
+          )}
         </form>
         {profile.data?.whatsapp && (
           <p className="meta">

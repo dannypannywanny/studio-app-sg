@@ -57,11 +57,13 @@ describe('signUpStudent', () => {
     expect((await auth.getUserByEmail(email)).customClaims?.s).toEqual({ [t.schoolId]: 'known' });
   });
 
-  it('signing up again just sends the link; staff logins are left alone', async () => {
+  it('signing up again says the account exists (no email); staff logins are left alone', async () => {
     const { t, host } = await setup();
     const email = `twice-${t.schoolId}@example.test`;
     await signUpStudent(db, auth, new FakeSender(), form(host, email), OPTS);
-    expect(await signUpStudent(db, auth, new FakeSender(), form(host, email), OPTS)).toBe('existing');
+    const again = new FakeSender();
+    expect(await signUpStudent(db, auth, again, form(host, email), OPTS)).toBe('existing');
+    expect(again.sent).toHaveLength(0);
     const staff = `staff-${t.schoolId}@example.test`;
     await setMemberRole(db, auth, { schoolId: t.schoolId, email: staff, role: 'admin' }, owner);
     const sender = new FakeSender();

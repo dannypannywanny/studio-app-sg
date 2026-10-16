@@ -94,6 +94,12 @@ button { font: inherit; color: inherit; }
 .auth-switch button { font-weight: 600; color: var(--ink); }
 .check { display: flex; gap: 10px; align-items: flex-start; font-size: 0.92rem; color: var(--ink-2); }
 .check input { margin-top: 3px; width: 18px; height: 18px; accent-color: var(--ink); }
+.phone-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; }
+.phone-row select {
+  min-height: 52px; max-width: 46vw; padding: 0 12px; border-radius: 14px; border: 1.5px solid var(--line);
+  background: var(--raised); color: var(--ink); font: inherit; font-size: 1rem;
+}
+.notice-info { background: var(--tan-soft); color: var(--ink); }
 .field-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
 .field input { width: 100%; min-width: 0; }
 .auth-foot { color: var(--ink-2); font-size: 0.9rem; text-align: center; }

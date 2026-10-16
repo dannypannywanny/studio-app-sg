@@ -468,8 +468,8 @@ export const signUpStudent = onCall({ secrets: [RESEND_API_KEY] }, async (req) =
   const origin = req.rawRequest.headers.origin;
   if (!origin) throw new HttpsError('invalid-argument', 'Open the sign-up page in a browser');
   const key = RESEND_API_KEY.value();
-  await signup.signUpStudent(db(), getAuth(), key ? alerts.resendSender(key) : null, { ...input, host: new URL(origin).hostname }, { defaultFrom: DEFAULT_ALERT_FROM });
-  return { ok: true };
+  const outcome = await signup.signUpStudent(db(), getAuth(), key ? alerts.resendSender(key) : null, { ...input, host: new URL(origin).hostname }, { defaultFrom: DEFAULT_ALERT_FROM });
+  return { existing: outcome === 'existing' };
 });
 
 // The 6-digit code from the same email, typed on the page that asked for it. Returns a custom token.
