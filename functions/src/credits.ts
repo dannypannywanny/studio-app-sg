@@ -19,6 +19,8 @@ export interface SellPackageInput {
   packageId: string;
   /** One per user action (the client makes it when the sell dialog opens). Retries return the first result. */
   idempotencyKey: string;
+  /** Set by the HitPay webhook only: the student already paid, so sell even if the package was retired since. */
+  paidOnline?: boolean;
   /** Expiry as a wall date in the school's zone (inclusive), null = never; omitted = the package's validity. */
   validUntil?: string | null;
   /** Off the package price: a percentage (0-100) or an amount in cents. */
@@ -94,7 +96,7 @@ export async function sellPackage(
       throw new HttpsError('failed-precondition', 'This student is archived');
     }
     const pkg = pkgSnap.data()!;
-    if (pkg.active === false) throw new HttpsError('failed-precondition', 'This package is no longer sold');
+    if (pkg.active === false && !input.paidOnline) throw new HttpsError('failed-precondition', 'This package is no longer sold');
     const sessions = pkg.sessions as number;
     if (!Number.isInteger(sessions) || sessions < 1) {
       throw new HttpsError('failed-precondition', 'Package has no session count');

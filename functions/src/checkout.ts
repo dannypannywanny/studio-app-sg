@@ -202,7 +202,7 @@ export async function handleHitPayWebhook(
   const paymentId = payload.payments?.find((p) => p.status === 'succeeded' || p.status === 'completed')?.id ?? requestId;
   const sale = await sellPackage(
     db,
-    { schoolId, studentId: snap.get('studentId') as string, packageId: snap.get('packageId') as string, idempotencyKey: `checkout-${checkoutId}` },
+    { schoolId, studentId: snap.get('studentId') as string, packageId: snap.get('packageId') as string, idempotencyKey: `checkout-${checkoutId}`, paidOnline: true },
     system,
     at,
   );

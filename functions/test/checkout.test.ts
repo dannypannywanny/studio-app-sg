@@ -78,6 +78,8 @@ describe('hitpayWebhook', () => {
     const { checkoutId } = await checkoutDone(t, host);
     const b = completed(t, checkoutId);
     const keys = { [t.schoolId]: { apiKey: 'k', salt: SALT } };
+    // Retired while they were paying: they still get what they paid for.
+    await db.doc(`schools/${t.schoolId}/packages/${t.pkg30}`).update({ active: false, sellsOnline: false });
     expect(await handleHitPayWebhook(db, keys, b, sign(b), NOW)).toBe('paid');
     const doc = (await db.doc(`schools/${t.schoolId}/checkouts/${checkoutId}`).get()).data()!;
     expect(doc.status).toBe('paid');
