@@ -16,7 +16,7 @@ import {
 } from '@lessonkaki/shared';
 import { BookingHours } from '../components/BookingHours';
 import { LessonTypesEditor } from '../components/LessonTypes';
-import { HOLIDAY_COUNTRIES, resolveHolidaySettings, type HolidayCountry } from '@lessonkaki/shared';
+import { HOLIDAY_COUNTRIES, resolveHolidaySettings, resolveReminders, type HolidayCountry, type ReminderSettings } from '@lessonkaki/shared';
 import { call, db } from '../firebase';
 import { useQuery, useSchool } from '../hooks';
 import { useSchoolId, useSession } from '../session';
@@ -237,6 +237,61 @@ function HolidaysForm({ raw, canEdit }: { raw: unknown; canEdit: boolean }) {
           {state.saved && <span className="success">{state.saved}</span>}
           {state.error && <span className="error">{state.error}</span>}
         </div>
+      </fieldset>
+    </form>
+  );
+}
+
+function RemindersForm({ raw, canEdit }: { raw: unknown; canEdit: boolean }) {
+  const [r, setR] = useState<ReminderSettings>(resolveReminders(raw));
+  const s = useSaveSchool();
+  const set = (patch: Partial<ReminderSettings>) => setR({ ...r, ...patch });
+  const num = (k: keyof ReminderSettings, min: number, max: number) => (
+    <input type="number" min={min} max={max} value={r[k] as number} onChange={(e) => set({ [k]: Number(e.target.value) } as Partial<ReminderSettings>)} />
+  );
+  return (
+    <form
+      className="form-grid"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void s.save({ reminders: r });
+      }}
+    >
+      <fieldset disabled={!canEdit} className="form-grid span-all fieldset-plain">
+        <label className="field checkbox span-all">
+          <input type="checkbox" checked={r.lessons} onChange={(e) => set({ lessons: e.target.checked })} />
+          <span>Email students before each lesson</span>
+        </label>
+        {r.lessons && (
+          <label className="field">
+            <span>Hours before the lesson</span>
+            {num('lessonHoursBefore', 1, 168)}
+          </label>
+        )}
+        <label className="field checkbox span-all">
+          <input type="checkbox" checked={r.payments} onChange={(e) => set({ payments: e.target.checked })} />
+          <span>Email students about unpaid invoices</span>
+        </label>
+        {r.payments && (
+          <>
+            <label className="field">
+              <span>“Due soon” email, days before due</span>
+              {num('dueSoonDays', 0, 30)}
+            </label>
+            <label className="field">
+              <span>Overdue email every (days)</span>
+              {num('overdueEveryDays', 1, 60)}
+            </label>
+            <label className="field">
+              <span>At most this many overdue emails</span>
+              {num('overdueMax', 0, 12)}
+            </label>
+          </>
+        )}
+        <p className="muted span-all">
+          Sent from your school’s email address. Each student gets one reminder per lesson; students without an email are skipped.
+        </p>
+        <SaveRow {...s} disabled={!canEdit} />
       </fieldset>
     </form>
   );
@@ -465,6 +520,9 @@ export function Settings() {
           <BookingHours />
         </Section>
       )}
+      <Section title="Reminders to students" note={ownerNote ?? 'Automatic emails to students. Off until you turn them on.'}>
+        <RemindersForm raw={(data as { reminders?: unknown }).reminders} canEdit={isOwner} />
+      </Section>
       <Section title="Public holidays" note={ownerNote ?? 'Holidays are labelled on the calendar. Schools that open on them can leave “Closed” off.'}>
         <HolidaysForm raw={(data as { holidays?: unknown }).holidays} canEdit={isOwner} />
       </Section>

@@ -11,3 +11,4 @@ export * from './authLinks';
 export * from './alerts';
 export * from './availability';
 export * from './holidays';
+export * from './reminders';

@@ -16,6 +16,7 @@ import { requireRole } from './auth';
 import * as attendance from './attendance';
 import * as booking from './booking';
 import * as holidays from './holidays';
+import * as reminders from './reminders';
 import * as credits from './credits';
 import * as lessons from './lessons';
 import * as invoicePdf from './invoicePdf';
@@ -448,4 +449,19 @@ export const setHolidays = onCall(async (req) => {
 export const refreshHolidays = onSchedule({ ...JOB, schedule: '0 3 1 * *' }, async () => {
   const res = await holidays.refreshAllHolidays(db());
   console.log(`refreshHolidays: ${res.updated} schools`);
+});
+
+// Student reminders (off until the school turns them on in Settings).
+export const sendLessonReminders = onSchedule({ ...JOB, schedule: 'every 60 minutes', secrets: [RESEND_API_KEY] }, async () => {
+  const key = RESEND_API_KEY.value();
+  if (!key) return console.warn('sendLessonReminders: no RESEND_API_KEY');
+  const res = await reminders.runLessonReminders(db(), alerts.resendSender(key), DEFAULT_ALERT_FROM);
+  console.log(`sendLessonReminders: ${res.sent} sent`);
+});
+
+export const sendPaymentReminders = onSchedule({ ...JOB, schedule: 'every day 10:00', secrets: [RESEND_API_KEY] }, async () => {
+  const key = RESEND_API_KEY.value();
+  if (!key) return console.warn('sendPaymentReminders: no RESEND_API_KEY');
+  const res = await reminders.runPaymentReminders(db(), alerts.resendSender(key), DEFAULT_ALERT_FROM);
+  console.log(`sendPaymentReminders: ${res.sent} sent`);
 });
