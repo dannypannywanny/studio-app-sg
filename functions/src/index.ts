@@ -206,6 +206,12 @@ export const cancelLesson = onCall(async (req) => {
   return attendance.cancelLesson(db(), input, actor);
 });
 
+export const deleteLesson = onCall(async (req) => {
+  const input = parse(z.object({ schoolId: id, lessonId: id }), req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
+  return attendance.deleteLesson(db(), input, actor);
+});
+
 const SellPackage = z.object({
   schoolId: id,
   studentId: id,

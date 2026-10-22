@@ -4,6 +4,7 @@ import {
   attendanceStateOf,
   cancelAttendance,
   cancelLesson,
+  deleteLesson,
   removeAttendee,
   setAttendance,
   setAttendeePackage,
@@ -328,5 +329,39 @@ describe('make-ups', () => {
     const id = await lesson(t);
     await mark(t, id, 'present');
     await expect(grantMakeUp(db, { schoolId: t.schoolId, lessonId: id, studentId: t.studentId }, owner)).rejects.toThrow(/absences and late cancels/);
+  });
+});
+
+describe('deleteLesson', () => {
+  const del = (t: TestSchool, lessonId: string) => deleteLesson(db, { schoolId: t.schoolId, lessonId }, owner);
+
+  it('removes an unmarked lesson and its attendees; no credit moves', async () => {
+    const t = await school();
+    await sell(t, t.pkg30);
+    const id = await lesson(t);
+    expect(await del(t, id)).toEqual({ deleted: true });
+    expect((await db.doc(`schools/${t.schoolId}/lessons/${id}`).get()).exists).toBe(false);
+    expect((await db.collection(`schools/${t.schoolId}/lessons/${id}/attendees`).get()).empty).toBe(true);
+    expect(await summary(t)).toEqual({ sessionsAvailable: 4, sessionsOwed: 0 });
+  });
+
+  it('refuses while a credit is used; works once unmarked', async () => {
+    const t = await school();
+    await sell(t, t.pkg30);
+    const id = await lesson(t);
+    await mark(t, id, 'present');
+    await expect(del(t, id)).rejects.toThrow(/Unmark the students first/);
+    await mark(t, id, 'booked');
+    await del(t, id);
+    expect(await summary(t)).toEqual({ sessionsAvailable: 4, sessionsOwed: 0 });
+  });
+
+  it('deletes a lesson students cancelled on time', async () => {
+    const t = await school();
+    await sell(t, t.pkg30);
+    const id = await lessonIn(t, 72);
+    await cancel(t, id);
+    await del(t, id);
+    expect((await db.doc(`schools/${t.schoolId}/lessons/${id}`).get()).exists).toBe(false);
   });
 });

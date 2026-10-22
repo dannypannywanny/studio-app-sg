@@ -26,6 +26,7 @@ const cancelAttendance = call<AttendeeRef & { mode: CancelMode }, { status: stri
 const addAttendee = call<AttendeeRef, { added: boolean }>('addAttendee');
 const grantMakeUp = call<AttendeeRef, { enrolmentId: string }>('grantMakeUp');
 const removeAttendee = call<AttendeeRef, { charge: string }>('removeAttendee');
+const deleteLesson = call<{ schoolId: string; lessonId: string }, { deleted: true }>('deleteLesson');
 const cancelLesson = call<{ schoolId: string; lessonId: string; reason: string | null }, { restored: number }>(
   'cancelLesson',
 );
@@ -361,6 +362,7 @@ export function LessonPanel({
   const [notice, setNotice] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<string | null>(null);
   const [confirmCancelLesson, setConfirmCancelLesson] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [reason, setReason] = useState('');
   const [cancelScope, setCancelScope] = useState<Scope>('one');
   const [rescheduling, setRescheduling] = useState(false);
@@ -419,6 +421,18 @@ export function LessonPanel({
       return `Series ended: ${res.deleted + res.cancelled} upcoming lessons removed, ${res.restored} credits returned.`;
     });
 
+  async function deleteWholeLesson() {
+    setBusy('deleteLesson');
+    setError(null);
+    try {
+      await deleteLesson({ schoolId, lessonId });
+      leave();
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(null);
+    }
+  }
+
   if (lesson.loading) return <p className="muted">Loading…</p>;
   if (!lesson.data) return <p className="empty">Lesson not found.</p>;
   const l = lesson.data;
@@ -426,6 +440,7 @@ export function LessonPanel({
   const hoursToStart = (l.startAt.toMillis() - Date.now()) / 3_600_000;
   const isLate = hoursToStart < policy.lateCancelHours;
   const visible = attendees.data.filter((a) => a.status !== 'removed');
+  const charged = attendees.data.some((a) => a.ledgerEntryId != null || a.makeUp);
   const onLesson = visible.map((a) => a.studentId);
   const Title = variant === 'page' ? 'h1' : 'h2';
 
@@ -441,7 +456,14 @@ export function LessonPanel({
           </p>
         </div>
         {cancelled ? (
-          <span className="badge badge-void">Cancelled{l.cancelReason ? `: ${l.cancelReason}` : ''}</span>
+          <div className="row">
+            <span className="badge badge-void">Cancelled{l.cancelReason ? `: ${l.cancelReason}` : ''}</span>
+            {!confirmDelete && isStaff && (
+              <button className="btn btn-ghost" onClick={() => setConfirmDelete(true)}>
+                Delete
+              </button>
+            )}
+          </div>
         ) : (
           <div className="row">
             {!rescheduling && isStaff && (
@@ -452,6 +474,11 @@ export function LessonPanel({
             {!confirmCancelLesson && isStaff && (
               <button className="btn" onClick={() => setConfirmCancelLesson(true)}>
                 Cancel lesson
+              </button>
+            )}
+            {!confirmDelete && isStaff && (
+              <button className="btn btn-ghost" onClick={() => setConfirmDelete(true)}>
+                Delete
               </button>
             )}
           </div>
@@ -467,6 +494,31 @@ export function LessonPanel({
             if (moved) leave();
           }}
         />
+      )}
+
+      {confirmDelete && (
+        <div className="card stack">
+          <h2>Delete this lesson?</h2>
+          {charged ? (
+            <p className="muted">
+              A credit was used for it. Unmark the students below first (the credit goes back), then delete.
+            </p>
+          ) : (
+            <p className="muted">
+              For a lesson added by mistake: it disappears from the calendar and the student's portal, as if it was never booked.
+              If it was planned and called off, use Cancel lesson instead so there's a record.
+            </p>
+          )}
+          <div className="row">
+            <button className="btn btn-primary" disabled={busy !== null || charged} onClick={deleteWholeLesson}>
+              {busy === 'deleteLesson' ? 'Deleting…' : 'Delete lesson'}
+            </button>
+            <button className="btn btn-ghost" onClick={() => setConfirmDelete(false)}>
+              Keep it
+            </button>
+            {error && <p className="error">{error}</p>}
+          </div>
+        </div>
       )}
 
       {confirmCancelLesson && !cancelled && (

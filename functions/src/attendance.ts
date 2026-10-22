@@ -604,6 +604,44 @@ export async function cancelLesson(
 }
 
 /**
+ * Deletes a lesson made by mistake (wrong date, wrong student), as if it never existed. Only while no
+ * credit is used on it: a charged lesson is unmarked first, so the ledger never points at a lesson that
+ * paid for nothing. A series date is added to the series' exdates so a later series edit won't recreate it.
+ */
+export async function deleteLesson(
+  db: Firestore,
+  input: { schoolId: string; lessonId: string },
+  actor: Actor,
+): Promise<{ deleted: true }> {
+  const school = schoolRef(db, input.schoolId);
+  return db.runTransaction(async (tx) => {
+    const lessonRef = school.collection('lessons').doc(input.lessonId);
+    const lessonSnap = await tx.get(lessonRef);
+    if (!lessonSnap.exists) notFound('Lesson');
+    const lesson = lessonSnap.data()!;
+    const attendees = (await tx.get(lessonRef.collection('attendees'))).docs;
+    const seriesRef = lesson.seriesId ? school.collection('series').doc(lesson.seriesId as string) : null;
+    const seriesSnap = seriesRef ? await tx.get(seriesRef) : null;
+    if (attendees.some((a) => a.get('ledgerEntryId') != null || a.get('makeUp'))) {
+      throw new HttpsError('failed-precondition', 'A credit was used for this lesson. Unmark the students first, then delete it.');
+    }
+    for (const a of attendees) tx.delete(a.ref);
+    tx.delete(lessonRef);
+    if (seriesSnap?.exists && lesson.occurrenceDate) {
+      tx.update(seriesSnap.ref, { exdates: FieldValue.arrayUnion(lesson.occurrenceDate), updatedAt: now() });
+    }
+    audit(tx, school, actor, 'deleteLesson', `lessons/${input.lessonId}`, {
+      startAt: lesson.startAt,
+      teacherId: lesson.teacherId,
+      studentIds: lesson.studentIds,
+      status: lesson.status,
+      seriesId: lesson.seriesId ?? null,
+    });
+    return { deleted: true as const };
+  });
+}
+
+/**
  * A note for one student about one lesson (what was covered, homework), shown to that student in the
  * learn portal. Owners/admins for any lesson; a teacher only for their own lessons.
  */
