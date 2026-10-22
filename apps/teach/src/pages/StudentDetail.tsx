@@ -4,6 +4,7 @@ import { Link, useParams } from 'react-router';
 import { useLessonHref } from '../components/LessonSheet';
 import { addDays, applyTax, formatDate, formatMoney, resolveTax, wallDateOf, type LedgerType } from '@lessonkaki/shared';
 import { useSubjects } from '../components/LessonTypes';
+import { CreditBoxes } from '../components/CreditBoxes';
 import { PortalAccess } from '../components/PortalAccess';
 import { call, db } from '../firebase';
 import { studentName, useDoc, useFormatTs, useQuery, useSchool, useTeachers, useTimeZone } from '../hooks';
@@ -340,7 +341,6 @@ export function StudentDetail() {
   const invoices = useQuery<Invoice>(`invoices:${studentId}`, byStudent('invoices'));
 
   const lotName = useMemo(() => new Map(lots.data.map((l) => [l.id, l.packageName])), [lots.data]);
-  const sortedLots = [...lots.data].sort((a, b) => b.validFrom.toMillis() - a.validFrom.toMillis());
   // Newest first; the server timestamp is briefly null on a just-written entry, so treat that as newest.
   const sortedLedger = [...ledger.data].sort(
     (a, b) => (b.createdAt?.toMillis() ?? Infinity) - (a.createdAt?.toMillis() ?? Infinity),
@@ -396,42 +396,14 @@ export function StudentDetail() {
           <h2>Packages</h2>
           {(role === 'owner' || role === 'admin') && <AdjustCredits studentId={studentId} lots={lots.data} />}
         </div>
-        {sortedLots.length === 0 ? (
-          <p className="empty">No packages yet.</p>
-        ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Package</th>
-                <th className="num">Left</th>
-                <th className="num">Used</th>
-                <th>Bought</th>
-                <th>Valid until</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedLots.map((l) => (
-                <tr key={l.id}>
-                  <td>{l.packageName}</td>
-                  <td className="num">
-                    {l.sessionsRemaining} / {l.sessionsTotal}
-                  </td>
-                  <td className="num">{l.sessionsUsed}</td>
-                  <td>{formatDate(l.validFrom.toDate(), tz)}</td>
-                  <td>{l.validUntil.toDate().getUTCFullYear() >= 9999 ? 'No expiry' : formatDate(l.validUntil.toDate(), tz)}</td>
-                  <td>
-                    <span className={`badge badge-${l.status}`}>{l.status}</span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        <CreditBoxes studentId={studentId} lots={lots.data} invoices={invoices.data} />
       </div>
 
-      <div className="card stack">
-        <h2>Credit ledger</h2>
+      <details className="card stack ledger-details">
+        <summary>
+          <h2>Full credit history</h2>
+          <span className="muted">Every credit change, newest first</span>
+        </summary>
         {sortedLedger.length === 0 ? (
           <p className="empty">No credit activity yet.</p>
         ) : (
@@ -450,7 +422,7 @@ export function StudentDetail() {
                 <tr key={e.id}>
                   <td>{fmt(e.createdAt)}</td>
                   <td>
-                    {LEDGER_LABEL[e.type]}
+                    {e.type === 'expire' && e.delta > 0 ? 'Expiry extended' : LEDGER_LABEL[e.type]}
                     {e.type === 'debit' && !e.enrolmentId && <span className="badge badge-warn">owed</span>}
                   </td>
                   <td className={`num ${e.delta < 0 ? 'neg' : 'pos'}`}>{e.delta > 0 ? `+${e.delta}` : e.delta}</td>
@@ -461,7 +433,7 @@ export function StudentDetail() {
             </tbody>
           </table>
         )}
-      </div>
+      </details>
 
       <div className="card stack">
         <h2>Invoices</h2>

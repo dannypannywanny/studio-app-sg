@@ -116,6 +116,8 @@ img { max-width: 100%; height: auto; }
 .btn:active:not(:disabled) { transform: scale(0.98); }
 .btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-pill); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* The status a student already has: shown filled, not faded, even though clicking it does nothing. */
+.btn[aria-pressed="true"]:disabled { opacity: 1; cursor: default; }
 .btn-primary {
   background: var(--tan); color: var(--on-tan); font-weight: 600;
   box-shadow: inset 0 -1px 0 rgb(22 22 22 / 0.12), 0 6px 16px -10px rgb(120 92 64 / 0.6);
@@ -369,6 +371,7 @@ body.sheet-open { overflow: hidden; }
 .att-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .att-name { font-weight: 600; text-decoration: none; margin-right: 2px; }
 .att-name:hover { text-decoration: underline; text-decoration-color: var(--tan); }
+.att-cancelled .att-name { text-decoration: line-through; text-decoration-color: var(--ink-3); color: var(--ink-3); }
 .att-head .badge { margin-left: 0; }
 .att-note { font-size: var(--text-sm); }
 .att-left { margin-left: auto; font-variant-numeric: tabular-nums; }
@@ -530,3 +533,39 @@ body.sheet-open { overflow: hidden; }
 .inv-totals dd { margin: 0; }
 .inv-totals .inv-total { padding-top: 6px; border-top: 1px solid var(--line); font-weight: 600; }
 .inv-totals .inv-total dt { color: var(--ink); }
+
+/* Lesson sheet: which package pays */
+.att .package-pick { gap: 8px; font-weight: 400; }
+.att .package-pick > span { min-width: 0; color: var(--ink-3); font-size: var(--text-sm); }
+
+/* Student packages as boxes (components/CreditBoxes.tsx): one box per session */
+.pkg-card { display: grid; gap: 10px; padding: 14px 0; border-top: 1px solid var(--line); }
+.pkg-card:first-child { border-top: 0; padding-top: 0; }
+.pkg-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; }
+.pkg-title { display: grid; gap: 2px; }
+.pkg-name { font-weight: 600; }
+.pkg-meta, .pkg-counts { font-size: var(--text-sm); }
+.pkg-counts { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.pkg-boxes { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.pkg-box { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: var(--r-label); border: 1.5px solid var(--line-strong); background: transparent; color: var(--ink-3); font-size: var(--text-sm); font-weight: 600; line-height: 1; }
+.pkg-box > a, .pkg-box > span { display: grid; place-items: center; width: 100%; height: 100%; color: inherit; text-decoration: none; border-radius: inherit; }
+.pkg-box > a:hover { box-shadow: inset 0 0 0 2px var(--ink-3); }
+.pkg-box.box-present { background: var(--ok-bg); border-color: var(--ok-line); color: var(--ok-fg); }
+.pkg-box.box-absent, .pkg-box.box-lateCancelled { background: var(--warn-bg); border-color: var(--warn-line); color: var(--warn-fg); }
+.pkg-box.box-used { background: var(--muted-bg); border-color: var(--line-strong); color: var(--muted-fg); }
+.pkg-box.box-free { border-color: var(--ink-3); }
+.pkg-box.box-booked { border-style: dashed; border-color: var(--tan); color: var(--tan-deep, var(--tan)); background: var(--due-bg); }
+.pkg-box.box-expired { border-style: dotted; color: var(--ink-3); background: repeating-linear-gradient(135deg, transparent 0 4px, var(--line) 4px 5px); }
+.pkg-expired .pkg-boxes, .pkg-completed .pkg-boxes, .pkg-void .pkg-boxes { opacity: 0.75; }
+.pkg-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: var(--text-xs); }
+.pkg-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.pkg-box-key { width: 18px; height: 18px; border-radius: 4px; font-size: 0.65rem; }
+.pkg-box-key svg { width: 10px; height: 10px; }
+
+/* Full credit history: folded away under the boxes */
+.ledger-details > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; cursor: pointer; list-style: none; }
+.ledger-details > summary::-webkit-details-marker { display: none; }
+.ledger-details > summary::before { content: '▸'; color: var(--ink-3); transition: transform 0.15s; }
+.ledger-details[open] > summary::before { transform: rotate(90deg); }
+.ledger-details > summary h2 { margin: 0; }
+.ledger-details > summary .muted { font-size: var(--text-sm); }

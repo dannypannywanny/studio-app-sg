@@ -364,23 +364,26 @@ export async function editInvoice(db: Firestore, input: EditInvoiceInput, actor:
     }
 
     // ---- writes ----
-    if (pendingDelta) {
-      const ct = new CreditTx(tx, school, actor, at);
-      ct.bump(inv.studentId as string, { outstandingCents: pendingDelta });
-      ct.flush();
-    }
+    const ct = new CreditTx(tx, school, actor, at);
+    if (pendingDelta) ct.bump(inv.studentId as string, { outstandingCents: pendingDelta });
+    let revived = 0;
     if (input.validUntil !== undefined) {
       const until =
         input.validUntil === null ? NO_EXPIRY : new Date(wallClockToUtc(input.validUntil, '00:00', tz).getTime() + DAY - 1);
       for (const l of lots) {
-        if (l.get('status') !== 'active') continue; // expired or void packages stay as they were
+        if (l.get('status') === 'void') continue;
+        // Extending a package that already expired gives back what expired with it.
+        if (l.get('status') === 'expired' && until.getTime() >= at.getTime()) {
+          revived += ct.unexpire(ct.useLot(l), `editInvoice:${l.id}:unexpire:${until.getTime()}`, 'Package extended');
+        }
         tx.update(l.ref, { validUntil: Timestamp.fromDate(until), updatedAt: now() });
       }
       changed.push('validUntil');
     }
+    ct.flush();
     if (Object.keys(update).length) tx.update(invoiceRef, { ...update, updatedAt: now() });
-    audit(tx, school, actor, 'editInvoice', `invoices/${input.invoiceId}`, { changed });
-    return { changed };
+    audit(tx, school, actor, 'editInvoice', `invoices/${input.invoiceId}`, { changed, ...(revived ? { revived } : {}) });
+    return { changed, revived };
   });
 }
 

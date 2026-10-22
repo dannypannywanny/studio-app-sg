@@ -226,6 +226,22 @@ export class CreditTx {
     return n;
   }
 
+  /**
+   * Undoes an expiry when staff extend a package: what expired comes back as remaining (one `expire +N`
+   * entry), and the lot is active again (or completed when nothing had expired).
+   */
+  unexpire(lot: LotState, key: string, reason: string): number {
+    const n = lot.expired;
+    if (n > 0) {
+      this.ledger({ studentId: lot.studentId, enrolmentId: lot.id, type: 'expire', delta: n, idempotencyKey: key, reason });
+      lot.expired = 0;
+      lot.remaining += n;
+      this.bump(lot.studentId, { sessionsAvailable: n });
+    }
+    lot.status = lot.remaining > 0 ? 'active' : 'completed';
+    return n;
+  }
+
   /** A manual change to what a lot holds: total and remaining move together. Returns the entry id. */
   adjust(lot: LotState, delta: number, reason: string, key: string): string {
     if (lot.remaining + delta < 0) throw new Error(`Lot ${lot.id} has only ${lot.remaining} left`);

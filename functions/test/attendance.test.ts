@@ -55,7 +55,10 @@ describe('cancelAttendance', () => {
     expect(res).toEqual({ status: 'cancelled', late: false, charge: 'none' });
     expect(await summary(t)).toEqual({ sessionsAvailable: 4, sessionsOwed: 0 });
     expect(await attendee(t, id)).toMatchObject({ status: 'cancelled', ledgerEntryId: null });
-    expect((await lessonDoc(t, id)).attendanceState).toBe('marked');
+    expect(await lessonDoc(t, id)).toMatchObject({ attendanceState: 'marked', studentsCancelled: true });
+    // Unmarking puts the lesson back on the calendar as a normal one.
+    await mark(t, id, 'booked');
+    expect(await lessonDoc(t, id)).toMatchObject({ attendanceState: 'unmarked', studentsCancelled: false });
   });
 
   it('inside lateCancelHours: lateCancelled, and the default policy keeps the credit with the student', async () => {
@@ -243,14 +246,46 @@ describe('choosing the package for a lesson', () => {
     expect((await lot(t, later.enrolmentId)).sessionsRemaining).toBe(3);
   });
 
-  it("rejects another student's or unknown package, and refuses once the credit is taken", async () => {
+  it("rejects another student's or unknown package", async () => {
     const t = await school();
-    const soon = await sell(t, t.pkg30);
+    await sell(t, t.pkg30);
     const id = await lesson(t);
     await expect(choose(t, id, 'not-a-lot')).rejects.toThrow(/isn't this student's/);
+  });
+
+  it('after marking, moves the credit to the chosen package (and back)', async () => {
+    const t = await school();
+    const soon = await sell(t, t.pkg30);
+    const later = await sell(t, t.pkg90);
+    const id = await lesson(t);
     await mark(t, id, 'present');
     expect((await attendee(t, id)).enrolmentId).toBe(soon.enrolmentId);
-    await expect(choose(t, id, soon.enrolmentId)).rejects.toThrow(/Unmark it first/);
+
+    expect(await choose(t, id, later.enrolmentId)).toEqual({ ok: true, moved: true });
+    expect(await attendee(t, id)).toMatchObject({ enrolmentId: later.enrolmentId, owed: false, status: 'present' });
+    expect((await lot(t, soon.enrolmentId)).sessionsRemaining).toBe(4);
+    expect((await lot(t, later.enrolmentId)).sessionsRemaining).toBe(3);
+    expect(await summary(t)).toEqual({ sessionsAvailable: 7, sessionsOwed: 0 });
+
+    // Same package again is a no-op; unmarking gives the credit back to where it now sits.
+    expect(await choose(t, id, later.enrolmentId)).toEqual({ ok: true, moved: false });
+    await mark(t, id, 'booked');
+    expect((await lot(t, later.enrolmentId)).sessionsRemaining).toBe(4);
+  });
+
+  it('refuses a package that is used up', async () => {
+    const t = await school();
+    const soon = await sell(t, t.pkg30);
+    const later = await sell(t, t.pkg90);
+    for (let i = 0; i < 4; i++) {
+      const l = await lesson(t);
+      await choose(t, l, later.enrolmentId);
+      await mark(t, l, 'present');
+    }
+    const id = await lesson(t);
+    await mark(t, id, 'present');
+    expect((await attendee(t, id)).enrolmentId).toBe(soon.enrolmentId);
+    await expect(choose(t, id, later.enrolmentId)).rejects.toThrow(/no credits left/);
   });
 });
 

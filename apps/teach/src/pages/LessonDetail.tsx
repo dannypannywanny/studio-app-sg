@@ -275,10 +275,11 @@ const STATUS_LABEL: Record<AttendanceStatus, string> = {
   removed: 'Removed',
 };
 
-const ACTIONS: { status: Markable; label: string; className: string }[] = [
-  { status: 'present', label: 'Present', className: 'btn-primary' },
-  { status: 'absent', label: 'Absent', className: '' },
-  { status: 'booked', label: 'Unmark', className: 'btn-ghost' },
+// Neutral until marked: only the status the student actually has is filled in, so an unmarked lesson
+// never looks marked at a glance.
+const ACTIONS: { status: Exclude<Markable, 'booked'>; label: string }[] = [
+  { status: 'present', label: 'Present' },
+  { status: 'absent', label: 'Absent' },
 ];
 
 /** Inline confirm for a student's cancel: shows whether it counts as late, lets staff override. */
@@ -496,7 +497,7 @@ export function LessonPanel({
           {visible.map((a) => {
             const s = students.byId.get(a.studentId);
             return (
-              <li key={a.id} className="att">
+              <li key={a.id} className={`att ${a.status === 'cancelled' || a.status === 'lateCancelled' ? 'att-cancelled' : ''}`}>
                 <div className="att-head">
                   {isStaff ? (
                     <Link className="att-name" to={`/students/${a.studentId}`}>
@@ -520,18 +521,23 @@ export function LessonPanel({
                 </div>
                 {s?.notes && <p className="staff-note att-notes">{s.notes}</p>}
                 <SharedNote lessonId={lessonId} studentId={a.studentId} note={a.sharedNote ?? ''} />
-                {isStaff && !cancelled && !a.ledgerEntryId && (a.status === 'booked' || a.status === 'present' || a.status === 'absent') && (
-                  <PackageSelect
-                    studentId={a.studentId}
-                    value={a.preferredEnrolmentId ?? null}
-                    disabled={busy !== null}
-                    onChange={(enrolmentId) =>
-                      run(`${a.studentId}:package`, async () => {
-                        await setAttendeePackage({ schoolId, lessonId, studentId: a.studentId, enrolmentId });
-                        return `${studentName(s)}: ${enrolmentId ? 'package chosen' : 'back to earliest expiry'}.`;
-                      })
-                    }
-                  />
+                {isStaff && !cancelled && !a.makeUp && a.status !== 'cancelled' && (
+                  <label className="package-pick">
+                    <span>{a.ledgerEntryId ? 'Paid from' : 'Pay from'}</span>
+                    <PackageSelect
+                      studentId={a.studentId}
+                      charged={a.ledgerEntryId != null}
+                      value={a.ledgerEntryId ? a.enrolmentId : (a.preferredEnrolmentId ?? null)}
+                      disabled={busy !== null}
+                      onChange={(enrolmentId) =>
+                        run(`${a.studentId}:package`, async () => {
+                          const res = await setAttendeePackage({ schoolId, lessonId, studentId: a.studentId, enrolmentId });
+                          if (res.moved) return `${studentName(s)}: credit moved to the chosen package.`;
+                          return `${studentName(s)}: ${enrolmentId ? 'package chosen' : 'back to earliest expiry'}.`;
+                        })
+                      }
+                    />
+                  </label>
                 )}
                 {cancelling === a.studentId ? (
                   <CancelChoice
@@ -544,16 +550,30 @@ export function LessonPanel({
                   />
                 ) : (
                   <div className="row">
-                    {ACTIONS.map((act) => (
+                    {ACTIONS.map((act) => {
+                      const on = a.status === act.status;
+                      return (
+                        <button
+                          key={act.status}
+                          className={`btn btn-sm ${on ? 'btn-primary' : ''}`}
+                          aria-pressed={on}
+                          disabled={on || busy !== null || cancelled}
+                          onClick={() => mark(a.studentId, act.status)}
+                        >
+                          {busy === `${a.studentId}:${act.status}` ? '…' : on ? `✓ ${act.label}` : act.label}
+                        </button>
+                      );
+                    })}
+                    {a.status !== 'booked' && (
                       <button
-                        key={act.status}
-                        className={`btn btn-sm ${act.className}`}
-                        disabled={a.status === act.status || busy !== null || cancelled}
-                        onClick={() => mark(a.studentId, act.status)}
+                        className="btn btn-sm btn-ghost"
+                        disabled={busy !== null || cancelled}
+                        onClick={() => mark(a.studentId, 'booked')}
+                        title="Back to not marked"
                       >
-                        {busy === `${a.studentId}:${act.status}` ? '…' : act.label}
+                        {busy === `${a.studentId}:booked` ? '…' : 'Unmark'}
                       </button>
-                    ))}
+                    )}
                     <button
                       className="btn btn-sm"
                       disabled={busy !== null || cancelled || a.status === 'cancelled' || a.status === 'lateCancelled'}

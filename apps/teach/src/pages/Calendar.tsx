@@ -12,7 +12,7 @@ import { TimeOffDetail, TimeOffForm, offEndMin, offLabel, offStartMin, useTimeOf
 import { db } from '../firebase';
 import { studentName, useQuery, useStudents, useTeachers, useTimeZone, type WithId } from '../hooks';
 import { useSchoolId, useSession } from '../session';
-import type { Lesson } from '../types';
+import { isLessonCancelled, type Lesson } from '../types';
 
 type View = 'day' | 'week' | 'month';
 const VIEWS: [View, string][] = [
@@ -58,7 +58,7 @@ function titleOf(view: View, date: string, tz: string) {
 }
 
 type Placed = { l: WithId<Lesson>; date: string; time: string; startMin: number; names: string };
-const stateOf = (l: Lesson) => (l.status === 'cancelled' ? 'cancelled' : l.attendanceState);
+const stateOf = (l: Lesson) => (isLessonCancelled(l) ? 'cancelled' : l.attendanceState);
 
 function readPref(key: string) {
   try {

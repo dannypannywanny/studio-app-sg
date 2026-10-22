@@ -145,7 +145,12 @@ export interface Lesson {
   isException?: boolean;
   cancelReason?: string | null;
   locationId?: string | null;
+  /** Every student on it cancelled (set by the attendance functions). */
+  studentsCancelled?: boolean;
 }
+
+/** Cancelled by the studio, or every student on it cancelled: both show struck through. */
+export const isLessonCancelled = (l: Lesson) => l.status === 'cancelled' || l.studentsCancelled === true;
 
 export interface Attendee {
   studentId: string;

@@ -6,7 +6,7 @@ import { useLessonHref } from '../components/LessonSheet';
 import { db } from '../firebase';
 import { studentName, useFormatTs, useQuery, useStudents, useTeachers } from '../hooks';
 import { useSchoolId } from '../session';
-import type { Lesson } from '../types';
+import { isLessonCancelled, type Lesson } from '../types';
 
 const STATE_LABEL = { unmarked: 'Not marked', partial: 'Partly marked', marked: 'Marked' } as const;
 
@@ -76,7 +76,7 @@ export function Lessons() {
           </thead>
           <tbody>
             {rows.map((l) => (
-              <tr key={l.id} className={l.status === 'cancelled' ? 'cancelled' : ''}>
+              <tr key={l.id} className={isLessonCancelled(l) ? 'cancelled' : ''}>
                 <td>
                   <Link to={lessonHref(l.id)}>{fmt(l.startAt)}</Link>
                   <span className="muted"> · {l.durationMin} min{l.seriesId ? ' · weekly' : ''}</span>
@@ -85,7 +85,11 @@ export function Lessons() {
                 <td>{teachers.byId.get(l.teacherId)?.displayName ?? '—'}</td>
                 <td>{l.isOnline ? 'Online' : 'In studio'}</td>
                 <td>
-                  <span className={`badge badge-${l.attendanceState}`}>{STATE_LABEL[l.attendanceState]}</span>
+                  {isLessonCancelled(l) ? (
+                    <span className="badge badge-cancelled">Cancelled</span>
+                  ) : (
+                    <span className={`badge badge-${l.attendanceState}`}>{STATE_LABEL[l.attendanceState]}</span>
+                  )}
                 </td>
               </tr>
             ))}

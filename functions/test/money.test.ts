@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { setAttendance } from '../src/attendance';
+import { expireLots } from '../src/jobs';
 import { editInvoice, issueCreditNote, markOverdue, recordPayment, voidInvoice, type PaymentMethod } from '../src/money';
 import { DAY, db, ledger, lesson, lot, money, owner, sell, summary, withInvariant, type TestSchool } from './helpers';
 
@@ -161,6 +162,35 @@ describe('editInvoice', () => {
     const t = await school();
     const sale = await sell(t, t.pkg30);
     await edit(t, sale.invoiceId, { validUntil: '2031-03-15' });
+    expect((await lot(t, sale.enrolmentId)).validUntil.toDate().toISOString()).toBe('2031-03-15T15:59:59.999Z');
+  });
+
+  it('extending an expired package brings back what expired', async () => {
+    const t = await school();
+    const t0 = new Date(Date.now() - 40 * DAY);
+    const sale = await sell(t, t.pkg30, t0);
+    const id = await lesson(t, new Date(t0.getTime() + DAY));
+    await setAttendance(db, { schoolId: t.schoolId, lessonId: id, studentId: t.studentId, status: 'present' }, owner, new Date(t0.getTime() + DAY));
+    await expireLots(db, t.schoolId);
+    expect(await lot(t, sale.enrolmentId)).toMatchObject({ status: 'expired', sessionsRemaining: 0, sessionsExpired: 3 });
+
+    expect(await edit(t, sale.invoiceId, { validUntil: '2031-03-15' })).toMatchObject({ revived: 3 });
+    expect(await lot(t, sale.enrolmentId)).toMatchObject({ status: 'active', sessionsRemaining: 3, sessionsExpired: 0, sessionsUsed: 1 });
+    expect((await lot(t, sale.enrolmentId)).validUntil.toDate().toISOString()).toBe('2031-03-15T15:59:59.999Z');
+    expect(await summary(t)).toEqual({ sessionsAvailable: 3, sessionsOwed: 0 });
+    expect((await ledger(t)).filter((e) => e.type === 'expire').map((e) => e.delta).sort()).toEqual([-3, 3]);
+  });
+
+  it('extending a used-up package changes its date', async () => {
+    const t = await school();
+    const sale = await sell(t, t.pkg30);
+    for (let i = 0; i < 4; i++) {
+      const id = await lesson(t);
+      await setAttendance(db, { schoolId: t.schoolId, lessonId: id, studentId: t.studentId, status: 'present' }, owner);
+    }
+    expect((await lot(t, sale.enrolmentId)).status).toBe('completed');
+    await edit(t, sale.invoiceId, { validUntil: '2031-03-15' });
+    expect(await lot(t, sale.enrolmentId)).toMatchObject({ status: 'completed', sessionsRemaining: 0 });
     expect((await lot(t, sale.enrolmentId)).validUntil.toDate().toISOString()).toBe('2031-03-15T15:59:59.999Z');
   });
 });

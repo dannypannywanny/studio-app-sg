@@ -38,6 +38,18 @@ export function attendanceStateOf(statuses: AttendanceStatus[]): AttendanceState
   return marked === counted.length ? 'marked' : 'partial';
 }
 
+/**
+ * The lesson-level fields derived from its attendees. `studentsCancelled`: everyone on it cancelled
+ * (on time or late), so the calendar shows it struck through like a lesson the studio cancelled.
+ */
+export function lessonStateOf(statuses: AttendanceStatus[]): { attendanceState: AttendanceState; studentsCancelled: boolean } {
+  const counted = statuses.filter((s) => s !== 'removed');
+  return {
+    attendanceState: attendanceStateOf(statuses),
+    studentsCancelled: counted.length > 0 && counted.every((s) => s === 'cancelled' || s === 'lateCancelled'),
+  };
+}
+
 // ---------------------------------------------------------------------------------------------
 // The shared transition: prepare (reads) then apply (writes)
 // ---------------------------------------------------------------------------------------------
@@ -164,7 +176,7 @@ async function changeOne(
   l.ct.flush();
   l.ct.tx.update(l.attendee.ref, { ...applied.update, ...extra.attendee });
   const statuses = l.siblings.map((d) => (d.id === l.attendee.id ? to : (d.get('status') as AttendanceStatus)));
-  l.ct.tx.update(l.lessonRef, { attendanceState: attendanceStateOf(statuses), ...extra.lesson, updatedAt: now() });
+  l.ct.tx.update(l.lessonRef, { ...lessonStateOf(statuses), ...extra.lesson, updatedAt: now() });
   return applied;
 }
 
@@ -326,32 +338,71 @@ export function newAttendeeDoc(schoolId: string, lessonId: string, studentId: st
 }
 
 /**
- * Chooses which package pays for a student's lesson (null = earliest expiry). Only before the credit is
- * taken: a charged lesson is unmarked first, so the ledger never has to move a debit between packages.
+ * Chooses which package pays for a student's lesson (null = earliest expiry). Before the credit is taken
+ * it is only remembered. After, the charge moves: the credit goes back to the package (or owed lesson) it
+ * came from and is taken from the chosen one, each side a ledger entry, so balances stay reconcilable.
  */
 export async function setAttendeePackage(
   db: Firestore,
   input: AttendeeInput & { enrolmentId: string | null },
   actor: Actor,
-): Promise<{ ok: true }> {
+  at: Date = new Date(),
+): Promise<{ ok: true; moved: boolean }> {
   const school = schoolRef(db, input.schoolId);
   return db.runTransaction(async (tx) => {
-    const attendeeRef = school.collection('lessons').doc(input.lessonId).collection('attendees').doc(input.studentId);
-    const [attendeeSnap, lotSnap] = await readAll(
-      tx,
-      attendeeRef,
-      ...(input.enrolmentId ? [school.collection('enrolments').doc(input.enrolmentId)] : []),
-    );
+    const lessonRef = school.collection('lessons').doc(input.lessonId);
+    const attendeeRef = lessonRef.collection('attendees').doc(input.studentId);
+    const lotRef = (id: string) => school.collection('enrolments').doc(id);
+    const [lessonSnap, attendeeSnap] = await readAll(tx, lessonRef, attendeeRef);
+    if (!lessonSnap?.exists) notFound('Lesson');
     if (!attendeeSnap?.exists) notFound('Student on this lesson');
-    if (attendeeSnap.get('ledgerEntryId') != null) {
-      throw new HttpsError('failed-precondition', 'A credit was already used for this lesson. Unmark it first, then choose the package.');
-    }
-    if (input.enrolmentId && (!lotSnap?.exists || lotSnap.get('studentId') !== input.studentId)) {
+    const chargedId = attendeeSnap.get('ledgerEntryId') as string | null;
+    const fromId = (attendeeSnap.get('enrolmentId') as string | null) ?? null;
+    const [lotSnap, fromSnap] = await readAll(
+      tx,
+      ...(input.enrolmentId ? [lotRef(input.enrolmentId)] : []),
+      ...(chargedId && fromId && fromId !== input.enrolmentId ? [lotRef(fromId)] : []),
+    );
+    const target = input.enrolmentId ? lotSnap : undefined;
+    if (input.enrolmentId && (!target?.exists || target.get('studentId') !== input.studentId)) {
       throw new HttpsError('invalid-argument', "That package isn't this student's");
     }
-    tx.update(attendeeRef, { preferredEnrolmentId: input.enrolmentId, updatedAt: now() });
-    audit(tx, school, actor, 'setAttendeePackage', `lessons/${input.lessonId}/attendees/${input.studentId}`, { enrolmentId: input.enrolmentId });
-    return { ok: true };
+    const path = `lessons/${input.lessonId}/attendees/${input.studentId}`;
+
+    // Not charged yet, already on that package, or back to "auto": just remember the choice.
+    if (chargedId == null || !input.enrolmentId || input.enrolmentId === fromId) {
+      tx.update(attendeeRef, { preferredEnrolmentId: input.enrolmentId, updatedAt: now() });
+      audit(tx, school, actor, 'setAttendeePackage', path, { enrolmentId: input.enrolmentId });
+      return { ok: true, moved: false };
+    }
+
+    if (lessonSnap.get('status') === 'cancelled') throw new HttpsError('failed-precondition', 'This lesson is cancelled');
+    if (attendeeSnap.get('makeUp')) {
+      throw new HttpsError('failed-precondition', 'A make-up was already given for this lesson, so its credit stays where it is.');
+    }
+    const ct = new CreditTx(tx, school, actor, at);
+    const to = ct.useLot(target!);
+    const startMs = (lessonSnap.get('startAt') as Timestamp).toMillis();
+    if (to.status !== 'active' || to.remaining <= 0) throw new HttpsError('failed-precondition', 'That package has no credits left');
+    if (to.validUntilMs < startMs) {
+      throw new HttpsError('failed-precondition', "That package doesn't cover this lesson's date");
+    }
+    const from = fromId ? ct.useLot(fromSnap!) : null;
+    const attendeeKey = `${input.lessonId}_${input.studentId}`;
+    const rev = ((attendeeSnap.get('rev') as number | undefined) ?? 0) + 1;
+    ct.restore(input.studentId, from, { lessonId: input.lessonId, attendeeKey, key: `${attendeeKey}:${rev}:move`, reversesEntryId: chargedId });
+    const entryId = ct.debit(input.studentId, to, { lessonId: input.lessonId, attendeeKey, key: `${attendeeKey}:${rev}:move:debit` });
+    ct.flush();
+    tx.update(attendeeRef, {
+      ledgerEntryId: entryId,
+      enrolmentId: to.id,
+      owed: false,
+      preferredEnrolmentId: to.id,
+      rev,
+      updatedAt: now(),
+    });
+    audit(tx, school, actor, 'setAttendeePackage', path, { enrolmentId: to.id, movedFrom: fromId });
+    return { ok: true, moved: true };
   });
 }
 
@@ -413,7 +464,7 @@ export async function addAttendee(
     tx.update(lessonRef, {
       studentIds: FieldValue.arrayUnion(input.studentId),
       capacity: Math.max((lesson.capacity as number | undefined) ?? 1, studentIds.length),
-      attendanceState: attendanceStateOf([...statuses, 'booked']),
+      ...lessonStateOf([...statuses, 'booked']),
       // A one-off change to a series occurrence: later series edits leave this lesson alone.
       ...(lesson.seriesId ? { isException: true } : {}),
       updatedAt: now(),

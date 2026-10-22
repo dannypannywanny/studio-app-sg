@@ -20,7 +20,7 @@ const editInvoice = call<
     validUntil?: string | null;
     note?: string | null;
   },
-  { changed: string[] }
+  { changed: string[]; revived?: number }
 >('editInvoice');
 
 /** Edit what Classcard let you change on an invoice: number, due date, discount, package expiry, notes. */
@@ -62,7 +62,11 @@ function EditInvoice({ inv, onDone }: { inv: Invoice & { id: string }; onDone: (
     if ((note.trim() || null) !== (inv.note ?? null)) changes.note = note.trim() || null;
     try {
       const res = await editInvoice(changes);
-      onDone(res.changed.length ? 'Invoice updated.' : null);
+      onDone(
+        res.changed.length
+          ? `Invoice updated.${res.revived ? ` Package extended: ${res.revived} expired session${res.revived === 1 ? '' : 's'} back.` : ''}`
+          : null,
+      );
     } catch (err) {
       setError((err as Error).message);
       setBusy(false);
@@ -98,6 +102,12 @@ function EditInvoice({ inv, onDone }: { inv: Invoice & { id: string }; onDone: (
           <label className="field">
             <span>Package expiry ({lot.packageName})</span>
             <input type="date" value={neverValue ? '' : expiryValue} disabled={neverValue} onChange={(e) => setExpiry(e.target.value)} />
+            {lot.status === 'expired' && (
+              <span className="field-help">
+                Expired{lot.sessionsExpired ? ` with ${lot.sessionsExpired} session${lot.sessionsExpired === 1 ? '' : 's'} unused` : ''}. A later date
+                {lot.sessionsExpired ? ' gives them back' : ' reopens it'}.
+              </span>
+            )}
           </label>
           <label className="field checkbox">
             <input type="checkbox" checked={neverValue} onChange={(e) => setNever(e.target.checked)} />

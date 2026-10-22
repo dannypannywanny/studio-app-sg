@@ -22,7 +22,7 @@ import {
   type ResolvedAvailability,
 } from '@lessonkaki/shared';
 import { enqueueAlert } from './alerts';
-import { attendanceStateOf, newAttendeeDoc } from './attendance';
+import { lessonStateOf, newAttendeeDoc } from './attendance';
 import { audit, notFound, now, readAll, schoolRef, type Actor } from './db';
 import { MAX_DURATION_MIN, checkRefs, teacherWindow, writeLesson } from './lessons';
 
@@ -424,7 +424,7 @@ export async function bookLesson(db: Firestore, input: BookLessonInput, actor: A
       tx.update(lessonRef, {
         studentIds: FieldValue.arrayUnion(studentId),
         capacity: placesOf(group, capacity),
-        attendanceState: attendanceStateOf([...group.statuses, 'booked']),
+        ...lessonStateOf([...group.statuses, 'booked']),
         updatedAt: now(),
       });
       enqueueAlert(

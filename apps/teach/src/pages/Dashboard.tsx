@@ -5,7 +5,7 @@ import { addDays, formatDate, formatMoney, isOverdue, wallClockToUtc, wallDateOf
 import { db } from '../firebase';
 import { studentName, useQuery, useStudents, useTeachers, useTimeZone } from '../hooks';
 import { useSchoolId, useSession } from '../session';
-import type { Invoice, Lesson } from '../types';
+import { isLessonCancelled, type Invoice, type Lesson } from '../types';
 import { invoiceBadge } from './Invoices';
 import { useLessonHref } from '../components/LessonSheet';
 
@@ -95,7 +95,7 @@ export function Dashboard() {
           <table className="table">
             <tbody>
               {lessons.data.map((l) => (
-                <tr key={l.id} className={l.status === 'cancelled' ? 'cancelled' : ''}>
+                <tr key={l.id} className={isLessonCancelled(l) ? 'cancelled' : ''}>
                   <td>
                     <Link to={lessonHref(l.id)}>{wallTimeOf(l.startAt.toDate(), tz)}</Link>
                     <span className="muted"> · {l.durationMin} min</span>
@@ -103,7 +103,7 @@ export function Dashboard() {
                   <td>{l.studentIds.map((id) => studentName(students.byId.get(id))).join(', ') || '—'}</td>
                   <td>{teachers.byId.get(l.teacherId)?.displayName ?? '—'}</td>
                   <td>
-                    {l.status === 'cancelled' ? (
+                    {isLessonCancelled(l) ? (
                       <span className="badge badge-cancelled">Cancelled</span>
                     ) : (
                       <span className={`badge badge-${l.attendanceState}`}>{STATE_LABEL[l.attendanceState]}</span>
