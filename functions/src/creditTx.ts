@@ -21,7 +21,8 @@ export interface LotState {
   readonly id: string;
   readonly ref: DocumentReference;
   readonly studentId: string;
-  readonly validUntilMs: number;
+  /** Changes only when staff extend a package (editInvoice); the date itself is written by the caller. */
+  validUntilMs: number;
   readonly validFromMs: number;
   total: number;
   remaining: number;

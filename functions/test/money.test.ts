@@ -181,6 +181,22 @@ describe('editInvoice', () => {
     expect((await ledger(t)).filter((e) => e.type === 'expire').map((e) => e.delta).sort()).toEqual([-3, 3]);
   });
 
+  it('extending a completed package that had sessions expire brings them back and pays owed lessons', async () => {
+    const t = await school();
+    const t0 = new Date(Date.now() - 40 * DAY);
+    const sale = await sell(t, t.pkg30, t0);
+    await expireLots(db, t.schoolId); // 4 expire
+    // Filed as completed with expired sessions (as some imported packages are).
+    await db.doc(`schools/${t.schoolId}/enrolments/${sale.enrolmentId}`).update({ status: 'completed' });
+    const id = await lesson(t);
+    await setAttendance(db, { schoolId: t.schoolId, lessonId: id, studentId: t.studentId, status: 'present' }, owner);
+    expect(await summary(t)).toEqual({ sessionsAvailable: 0, sessionsOwed: 1 });
+
+    expect(await edit(t, sale.invoiceId, { validUntil: '2031-03-15' })).toMatchObject({ revived: 4, settled: 1 });
+    expect(await lot(t, sale.enrolmentId)).toMatchObject({ status: 'active', sessionsRemaining: 3, sessionsUsed: 1, sessionsExpired: 0 });
+    expect(await summary(t)).toEqual({ sessionsAvailable: 3, sessionsOwed: 0 });
+  });
+
   it('extending a used-up package changes its date', async () => {
     const t = await school();
     const sale = await sell(t, t.pkg30);

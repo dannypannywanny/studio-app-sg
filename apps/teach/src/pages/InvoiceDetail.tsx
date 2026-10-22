@@ -20,7 +20,7 @@ const editInvoice = call<
     validUntil?: string | null;
     note?: string | null;
   },
-  { changed: string[]; revived?: number }
+  { changed: string[]; revived?: number; settled?: number }
 >('editInvoice');
 
 /** Edit what Classcard let you change on an invoice: number, due date, discount, package expiry, notes. */
@@ -58,13 +58,15 @@ function EditInvoice({ inv, onDone }: { inv: Invoice & { id: string }; onDone: (
     if (number.trim() !== inv.number) changes.number = number.trim();
     if (due !== wallDateOf(inv.dueDate.toDate(), tz)) changes.dueDate = due;
     if (discountCents !== (inv.discountCents ?? 0)) changes.discount = discountCents ? { kind: 'amount', value: discountCents } : null;
-    if (lot && (neverValue !== lotNever || (!neverValue && expiryValue !== lotDate))) changes.validUntil = neverValue ? null : expiryValue;
+    // Expired sessions come back on save even when the date was already moved (an earlier edit didn't revive them).
+    const reviving = (lot?.sessionsExpired ?? 0) > 0 && lot?.status !== 'void';
+    if (lot && (reviving || neverValue !== lotNever || (!neverValue && expiryValue !== lotDate))) changes.validUntil = neverValue ? null : expiryValue;
     if ((note.trim() || null) !== (inv.note ?? null)) changes.note = note.trim() || null;
     try {
       const res = await editInvoice(changes);
       onDone(
         res.changed.length
-          ? `Invoice updated.${res.revived ? ` Package extended: ${res.revived} expired session${res.revived === 1 ? '' : 's'} back.` : ''}`
+          ? `Invoice updated.${res.revived ? ` Package extended: ${res.revived} expired session${res.revived === 1 ? '' : 's'} back.` : ''}${res.settled ? ` ${res.settled} owed lesson${res.settled === 1 ? '' : 's'} paid from it.` : ''}`
           : null,
       );
     } catch (err) {
@@ -102,10 +104,9 @@ function EditInvoice({ inv, onDone }: { inv: Invoice & { id: string }; onDone: (
           <label className="field">
             <span>Package expiry ({lot.packageName})</span>
             <input type="date" value={neverValue ? '' : expiryValue} disabled={neverValue} onChange={(e) => setExpiry(e.target.value)} />
-            {lot.status === 'expired' && (
+            {(lot.sessionsExpired ?? 0) > 0 && lot.status !== 'void' && (
               <span className="field-help">
-                Expired{lot.sessionsExpired ? ` with ${lot.sessionsExpired} session${lot.sessionsExpired === 1 ? '' : 's'} unused` : ''}. A later date
-                {lot.sessionsExpired ? ' gives them back' : ' reopens it'}.
+                {lot.sessionsExpired} session{lot.sessionsExpired === 1 ? '' : 's'} expired unused. Saving with a future date gives them back.
               </span>
             )}
           </label>

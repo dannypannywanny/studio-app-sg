@@ -8,7 +8,7 @@ import { Timestamp, type Firestore } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
 import { NO_EXPIRY, applyTax, wallClockToUtc, type InvoiceStatus } from '@lessonkaki/shared';
 import { enqueueAlert } from './alerts';
-import { CreditTx } from './creditTx';
+import { CreditTx, readOwed } from './creditTx';
 import { audit, notFound, now, readAll, schoolRef, type Actor } from './db';
 
 export const PAYMENT_METHODS = ['paynow', 'bank', 'cash'] as const;
@@ -319,6 +319,10 @@ export async function editInvoice(db: Firestore, input: EditInvoiceInput, actor:
 
     const lots =
       input.validUntil !== undefined ? (await tx.get(school.collection('enrolments').where('invoiceId', '==', input.invoiceId))).docs : [];
+    // A package extended with sessions coming back pays the student's owed lessons first, like a sale.
+    const ct = new CreditTx(tx, school, actor, at);
+    const reviving = lots.some((l) => l.get('status') !== 'void' && ((l.get('sessionsExpired') as number | undefined) ?? 0) > 0);
+    const owed = reviving ? await readOwed(ct, input.schoolId, inv.studentId as string) : [];
 
     if (input.dueDate !== undefined) {
       const due = wallClockToUtc(input.dueDate, '00:00', tz);
@@ -364,17 +368,22 @@ export async function editInvoice(db: Firestore, input: EditInvoiceInput, actor:
     }
 
     // ---- writes ----
-    const ct = new CreditTx(tx, school, actor, at);
     if (pendingDelta) ct.bump(inv.studentId as string, { outstandingCents: pendingDelta });
     let revived = 0;
+    let settled = 0;
     if (input.validUntil !== undefined) {
       const until =
         input.validUntil === null ? NO_EXPIRY : new Date(wallClockToUtc(input.validUntil, '00:00', tz).getTime() + DAY - 1);
       for (const l of lots) {
         if (l.get('status') === 'void') continue;
-        // Extending a package that already expired gives back what expired with it.
-        if (l.get('status') === 'expired' && until.getTime() >= at.getTime()) {
-          revived += ct.unexpire(ct.useLot(l), `editInvoice:${l.id}:unexpire:${until.getTime()}`, 'Package extended');
+        // Extending to a future date gives back what expired on the package (whether it is filed as
+        // expired, or as completed because nothing was left), then settles owed lessons it now covers.
+        const expired = (l.get('sessionsExpired') as number | undefined) ?? 0;
+        if (expired > 0 && until.getTime() >= at.getTime()) {
+          const lot = ct.useLot(l);
+          lot.validUntilMs = until.getTime();
+          revived += ct.unexpire(lot, `editInvoice:${l.id}:unexpire:${until.getTime()}`, 'Package extended');
+          settled += ct.settleOwed(lot, owed, `editInvoice:${l.id}:${until.getTime()}`, input.invoiceId);
         }
         tx.update(l.ref, { validUntil: Timestamp.fromDate(until), updatedAt: now() });
       }
@@ -382,8 +391,8 @@ export async function editInvoice(db: Firestore, input: EditInvoiceInput, actor:
     }
     ct.flush();
     if (Object.keys(update).length) tx.update(invoiceRef, { ...update, updatedAt: now() });
-    audit(tx, school, actor, 'editInvoice', `invoices/${input.invoiceId}`, { changed, ...(revived ? { revived } : {}) });
-    return { changed, revived };
+    audit(tx, school, actor, 'editInvoice', `invoices/${input.invoiceId}`, { changed, ...(revived ? { revived, settled } : {}) });
+    return { changed, revived, settled };
   });
 }
 
