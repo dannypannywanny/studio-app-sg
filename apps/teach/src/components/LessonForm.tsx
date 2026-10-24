@@ -54,7 +54,10 @@ interface CallableError {
   details?: { conflicts?: { date: string }[] };
 }
 
-export function LessonForm({ onDone, initialDate }: { onDone: () => void; initialDate?: string }) {
+/** Usual length of a lead's trial lesson; staff can change it in the form. */
+export const TRIAL_MINUTES = 30;
+
+export function LessonForm({ onDone, initialDate, trialFor }: { onDone: () => void; initialDate?: string; trialFor?: string }) {
   const schoolId = useSchoolId();
   const { teacherId: myTeacherId, role } = useSession();
   const tz = useTimeZone();
@@ -66,8 +69,8 @@ export function LessonForm({ onDone, initialDate }: { onDone: () => void; initia
   const [date, setDate] = useState(initialDate ?? initial.date);
   const [time, setTime] = useState(initial.time);
   const [typeKey, setTypeKey] = useState('');
-  const [minutes, setMinutes] = useState<number | null>(null);
-  const [studentIds, setStudentIds] = useState<string[]>([]);
+  const [minutes, setMinutes] = useState<number | null>(trialFor ? TRIAL_MINUTES : null);
+  const [studentIds, setStudentIds] = useState<string[]>(trialFor ? [trialFor] : []);
   const [packages, setPackages] = useState<Record<string, string | null>>({});
   const places = useRooms();
   const [roomId, setRoomId] = useState('');
@@ -83,7 +86,10 @@ export function LessonForm({ onDone, initialDate }: { onDone: () => void; initia
       ),
     );
   const [isOnline, setOnline] = useState(false);
-  const [repeats, setRepeats] = useState(false);
+  const [repeatsWanted, setRepeats] = useState(false);
+  // Leads come for a single trial lesson; weekly lessons are for students.
+  const hasLead = studentIds.some((id) => students.byId.get(id)?.status === 'lead');
+  const repeats = repeatsWanted && !hasLead;
   const [byDay, setByDay] = useState<Weekday[] | null>(null);
   const [until, setUntil] = useState('');
   const [busy, setBusy] = useState(false);
@@ -149,7 +155,7 @@ export function LessonForm({ onDone, initialDate }: { onDone: () => void; initia
           value={type?.key ?? ''}
           onChange={(e) => {
             setTypeKey(e.target.value);
-            setMinutes(null); // the new type's length, unless changed again below
+            setMinutes(hasLead ? TRIAL_MINUTES : null); // the new type's length (a trial's), unless changed again below
           }}
           disabled={types.length === 0}
         >
@@ -204,10 +210,14 @@ export function LessonForm({ onDone, initialDate }: { onDone: () => void; initia
         <input type="checkbox" checked={isOnline} onChange={(e) => setOnline(e.target.checked)} />
         <span>Online</span>
       </label>
-      <label className="field checkbox span-all">
-        <input type="checkbox" checked={repeats} onChange={(e) => setRepeats(e.target.checked)} />
-        <span>Repeats weekly</span>
-      </label>
+      {hasLead ? (
+        <p className="muted span-all">Leads are booked for a single trial lesson. It's free unless they have a package.</p>
+      ) : (
+        <label className="field checkbox span-all">
+          <input type="checkbox" checked={repeats} onChange={(e) => setRepeats(e.target.checked)} />
+          <span>Repeats weekly</span>
+        </label>
+      )}
       {repeats && (
         <>
           <fieldset className="field">
@@ -236,7 +246,12 @@ export function LessonForm({ onDone, initialDate }: { onDone: () => void; initia
             {studentIds.map((id) => (
               <label key={id} className="package-pick">
                 <span>{studentName(students.byId.get(id))}</span>
-                <PackageSelect studentId={id} value={packages[id] ?? null} onChange={(v) => setPackages({ ...packages, [id]: v })} />
+                <PackageSelect
+                  studentId={id}
+                  trial={students.byId.get(id)?.status === 'lead'}
+                  value={packages[id] ?? null}
+                  onChange={(v) => setPackages({ ...packages, [id]: v })}
+                />
               </label>
             ))}
           </div>
@@ -244,7 +259,7 @@ export function LessonForm({ onDone, initialDate }: { onDone: () => void; initia
       </fieldset>
       <div className="form-actions">
         <button className="btn btn-primary" disabled={busy}>
-          {busy ? 'Saving…' : repeats ? 'Create weekly lessons' : 'Create lesson'}
+          {busy ? 'Saving…' : repeats ? 'Create weekly lessons' : trialFor ? 'Book trial' : 'Create lesson'}
         </button>
         <button type="button" className="btn btn-ghost" onClick={onDone}>
           Cancel

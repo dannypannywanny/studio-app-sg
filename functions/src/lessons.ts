@@ -1,7 +1,7 @@
 import { Timestamp, type DocumentReference, type DocumentSnapshot, type Firestore, type Query } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
 import { enqueueAlert } from './alerts';
-import { newAttendeeDoc } from './attendance';
+import { markTrialBooked, newAttendeeDoc } from './attendance';
 import { audit, notFound, now, readAll, schoolRef, type Actor } from './db';
 
 /** Longest lesson we accept; also bounds the conflict query window. */
@@ -58,6 +58,8 @@ export function writeLesson(
   overwrite = false,
   /** Who put the students on it: staff ('admin') or the student portal ('portal'). */
   source: 'admin' | 'portal' = 'admin',
+  /** Leads on it for a trial (shown as "Name (Trial)"; free unless they have a package). */
+  trialIds: readonly string[] = [],
 ): void {
   const startTs = Timestamp.fromMillis(startMs);
   const put = (r: DocumentReference, data: FirebaseFirestore.DocumentData) => (overwrite ? tx.set(r, data) : tx.create(r, data));
@@ -76,22 +78,27 @@ export function writeLesson(
     status: 'scheduled',
     capacity: Math.max(1, shape.capacity ?? 1, studentIds.length),
     studentIds,
+    ...(trialIds.length ? { trialStudentIds: [...trialIds] } : {}),
     attendanceState: 'unmarked',
     createdBy: actor.uid,
     createdAt: now(),
     updatedAt: now(),
   });
   for (const studentId of studentIds) {
-    put(ref.collection('attendees').doc(studentId), newAttendeeDoc(schoolId, ref.id, studentId, startTs, source));
+    put(ref.collection('attendees').doc(studentId), newAttendeeDoc(schoolId, ref.id, studentId, startTs, source, trialIds.includes(studentId)));
   }
 }
 
-/** Reads and checks the teacher, subject and students a lesson or series refers to. */
+/**
+ * Reads and checks the teacher, subject and students a lesson or series refers to. Leads are refused unless
+ * `leads` is 'trial' (a single lesson booked by staff); `leadSnaps` then lists them.
+ */
 export async function checkRefs(
   tx: FirebaseFirestore.Transaction,
   school: DocumentReference,
   refs: { teacherId: string; subjectId: string; studentIds: string[] },
-): Promise<DocumentSnapshot> {
+  leads: 'refuse' | 'trial' = 'refuse',
+): Promise<DocumentSnapshot & { leadSnaps?: DocumentSnapshot[] }> {
   const [schoolSnap, teacherSnap, subjectSnap, ...studentSnaps] = await readAll(
     tx,
     school,
@@ -105,8 +112,11 @@ export async function checkRefs(
   for (const s of studentSnaps) {
     if (!s.exists) notFound(`Student ${s.id}`);
     if (s.get('status') === 'archived') throw new HttpsError('failed-precondition', `Student ${s.id} is archived`);
+    if (s.get('status') === 'lead' && leads === 'refuse') {
+      throw new HttpsError('failed-precondition', 'Leads can only be booked for a single trial lesson. Make them a student first.');
+    }
   }
-  return schoolSnap;
+  return Object.assign(schoolSnap, { leadSnaps: studentSnaps.filter((s) => s.get('status') === 'lead') });
 }
 
 export interface CreateLessonInput {
@@ -141,7 +151,7 @@ export async function createLesson(
   const end = start + input.durationMin * 60_000;
 
   return db.runTransaction(async (tx) => {
-    await checkRefs(tx, school, { teacherId: input.teacherId, subjectId: input.subjectId, studentIds });
+    const { leadSnaps = [] } = await checkRefs(tx, school, { teacherId: input.teacherId, subjectId: input.subjectId, studentIds }, 'trial');
 
     // Teacher conflict: any scheduled lesson for this teacher overlapping [start, end).
     const nearby = await tx.get(teacherWindow(school, input.teacherId, start, end));
@@ -153,7 +163,9 @@ export async function createLesson(
     }
 
     const lessonRef = school.collection('lessons').doc();
-    writeLesson(tx, lessonRef, input.schoolId, input, start, studentIds, actor);
+    const trialIds = leadSnaps.map((s) => s.id);
+    writeLesson(tx, lessonRef, input.schoolId, input, start, studentIds, actor, null, false, 'admin', trialIds);
+    for (const lead of leadSnaps) markTrialBooked(tx, lead);
     // A lesson entered after the fact is record-keeping, not a booking.
     if (start > at.getTime()) {
       enqueueAlert(
@@ -165,7 +177,7 @@ export async function createLesson(
         at,
       );
     }
-    audit(tx, school, actor, 'createLesson', `lessons/${lessonRef.id}`, { teacherId: input.teacherId, studentIds });
+    audit(tx, school, actor, 'createLesson', `lessons/${lessonRef.id}`, { teacherId: input.teacherId, studentIds, trialIds });
     return { lessonId: lessonRef.id };
   });
 }

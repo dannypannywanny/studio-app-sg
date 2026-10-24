@@ -19,6 +19,8 @@ export const INVITE_OUTCOMES = [
   'already',
   'notFound',
   'archived',
+  /** A lead (prospect): make them a student first. */
+  'lead',
   'noEmail',
   /** Another student in this school has the same email. */
   'sharedEmail',
@@ -75,6 +77,7 @@ async function decide(
   const snap = await schoolRef(db, schoolId).collection('students').doc(studentId).get();
   if (!snap.exists) return { outcome: 'notFound' };
   if (snap.get('status') === 'archived') return { outcome: 'archived' };
+  if (snap.get('status') === 'lead') return { outcome: 'lead' };
   const email = String(snap.get('email') ?? '').trim().toLowerCase();
   if (!EMAIL.test(email)) return { outcome: 'noEmail' };
   if ((owners.get(email) ?? []).some((id) => id !== studentId)) return { outcome: 'sharedEmail', email };

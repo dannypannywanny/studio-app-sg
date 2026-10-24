@@ -7,6 +7,7 @@ import type {
   CreditPolicy,
   EnrolmentStatus,
   InvoiceStatus,
+  LeadStage,
   LedgerType,
   LessonStatus,
   StudentStatus,
@@ -65,6 +66,17 @@ export interface Student {
   createdOn?: string | null;
   summary?: Partial<StudentSummary> & { outstandingCents?: number; moneyCreditCents?: number };
   createdAt?: Ts;
+  /** Set while they're a lead (status 'lead'), and kept after they're won or lost. */
+  lead?: Lead;
+}
+
+export interface Lead {
+  stage: LeadStage;
+  /** Date to get back to them (yyyy-MM-dd); shows on Today once due. */
+  followUpOn?: string | null;
+  lostReason?: string | null;
+  /** When they were won or lost. */
+  closedAt?: Ts | null;
 }
 
 export interface Enrolment {
@@ -147,6 +159,8 @@ export interface Lesson {
   locationId?: string | null;
   /** Every student on it cancelled (set by the attendance functions). */
   studentsCancelled?: boolean;
+  /** Leads on it for a trial lesson. */
+  trialStudentIds?: string[];
 }
 
 /** Cancelled by the studio, or every student on it cancelled: both show struck through. */
@@ -154,6 +168,8 @@ export const isLessonCancelled = (l: Lesson) => l.status === 'cancelled' || l.st
 
 export interface Attendee {
   studentId: string;
+  /** A lead's trial: free unless they have a package. */
+  trial?: boolean;
   status: AttendanceStatus;
   owed: boolean;
   enrolmentId: string | null;

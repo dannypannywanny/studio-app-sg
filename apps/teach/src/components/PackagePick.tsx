@@ -40,6 +40,7 @@ export function PackageSelect({
   onChange,
   disabled,
   charged = false,
+  trial = false,
 }: {
   studentId: string;
   value: string | null;
@@ -47,6 +48,8 @@ export function PackageSelect({
   disabled?: boolean;
   /** A credit was already taken (value = the package it came from, null = owed). */
   charged?: boolean;
+  /** A lead's trial: with no package it's free, not owed. */
+  trial?: boolean;
 }) {
   const tz = useTimeZone();
   const lots = useActiveLots(studentId, charged ? value : null);
@@ -59,7 +62,8 @@ export function PackageSelect({
       .join(' · ');
   };
   // After marking there's no "auto": the credit sits on one package (or is owed).
-  const empty = charged ? (value ? null : 'Owed (no package)') : lots.length ? 'Auto: earliest expiry' : 'No package with credits: owed';
+  const none = trial ? 'No package: free trial' : 'No package with credits: owed';
+  const empty = charged ? (value ? null : 'Owed (no package)') : lots.length ? 'Auto: earliest expiry' : none;
   return (
     <select
       className="package-select"

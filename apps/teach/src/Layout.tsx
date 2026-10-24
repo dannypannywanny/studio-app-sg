@@ -44,6 +44,7 @@ export function Layout() {
           ) : (
             <>
               <NavLink to="/students">Students</NavLink>
+              <NavLink to="/leads">Leads</NavLink>
               <NavLink to="/lessons">Lessons</NavLink>
               <NavLink to="/invoices">Invoices</NavLink>
               <NavLink to="/packages">Packages</NavLink>

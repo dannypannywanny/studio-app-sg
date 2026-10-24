@@ -110,7 +110,7 @@ export function StudentSearch({
               onMouseEnter={() => setActive(i)}
             >
               <span className="picker-name">{studentName(s)}</span>
-              <span className="picker-meta">{s.email || s.phone}</span>
+              <span className="picker-meta">{s.status === 'lead' ? `Lead · ${s.email || s.phone || 'trial'}` : s.email || s.phone}</span>
             </li>
           ))}
           {results.length === 0 && <li className="picker-empty">{q ? 'No student matches.' : 'No more students.'}</li>}

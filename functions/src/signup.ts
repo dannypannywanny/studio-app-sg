@@ -75,6 +75,10 @@ export async function signUpStudent(
   const onFile = (await school.collection('students').where('email', '==', email).get()).docs.filter((d) => d.get('status') !== 'archived');
   if (onFile.length > 1) throw new HttpsError('failed-precondition', 'This email is shared by more than one student. Please contact the studio.');
   if (onFile.length === 1) {
+    // A lead signing up for themselves has become a student.
+    if (onFile[0]!.get('status') === 'lead') {
+      await onFile[0]!.ref.update({ status: 'active', 'lead.stage': 'won', 'lead.closedAt': Timestamp.fromDate(at), updatedAt: now() });
+    }
     const [r] = await inviteStudents(db, auth, { schoolId, studentIds: [onFile[0]!.id] }, actor);
     if (r!.outcome !== 'invited' && r!.outcome !== 'already') throw new HttpsError('failed-precondition', 'Please contact the studio to sign in.');
     await link();

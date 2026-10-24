@@ -3,11 +3,12 @@ import { collection, orderBy, query, Timestamp, where } from 'firebase/firestore
 import { Link } from 'react-router';
 import { addDays, formatDate, formatMoney, isOverdue, wallClockToUtc, wallDateOf, wallTimeOf } from '@lessonkaki/shared';
 import { db } from '../firebase';
-import { studentName, useQuery, useStudents, useTeachers, useTimeZone } from '../hooks';
+import { studentName, useQuery, useStudents, useTeachers, useTimeZone, lessonStudents } from '../hooks';
 import { useSchoolId, useSession } from '../session';
 import { isLessonCancelled, type Invoice, type Lesson } from '../types';
 import { invoiceBadge } from './Invoices';
 import { useLessonHref } from '../components/LessonSheet';
+import { isOpenLead } from './Leads';
 
 const STATE_LABEL = { unmarked: 'Not marked', partial: 'Partly marked', marked: 'Marked' } as const;
 
@@ -44,6 +45,9 @@ export function Dashboard() {
     .sort((a, b) => (b.summary?.sessionsOwed ?? 0) - (a.summary?.sessionsOwed ?? 0));
   const owedLessons = owing.reduce((n, s) => n + (s.summary?.sessionsOwed ?? 0), 0);
   const scheduled = lessons.data.filter((l) => l.status !== 'cancelled');
+  const followUps = students.data
+    .filter((s) => isOpenLead(s) && s.lead?.followUpOn && s.lead.followUpOn <= today)
+    .sort((a, b) => (a.lead!.followUpOn! < b.lead!.followUpOn! ? -1 : 1));
   const toMark = scheduled.filter((l) => l.attendanceState !== 'marked' && l.endAt.toMillis() < Date.now()).length;
 
   return (
@@ -100,7 +104,7 @@ export function Dashboard() {
                     <Link to={lessonHref(l.id)}>{wallTimeOf(l.startAt.toDate(), tz)}</Link>
                     <span className="muted"> · {l.durationMin} min</span>
                   </td>
-                  <td>{l.studentIds.map((id) => studentName(students.byId.get(id))).join(', ') || '—'}</td>
+                  <td>{lessonStudents(l, students.byId) || '—'}</td>
                   <td>{teachers.byId.get(l.teacherId)?.displayName ?? '—'}</td>
                   <td>
                     {isLessonCancelled(l) ? (
@@ -143,6 +147,30 @@ export function Dashboard() {
           )}
           {overdue.length > 8 && <Link to="/invoices?filter=overdue">All {overdue.length} overdue invoices</Link>}
         </div>
+
+        {followUps.length > 0 && (
+          <div className="card stack">
+            <h2>Leads to follow up</h2>
+            <table className="table">
+              <tbody>
+                {followUps.slice(0, 8).map((s) => (
+                  <tr key={s.id}>
+                    <td>
+                      <Link to={`/students/${s.id}`}>{studentName(s)}</Link>
+                    </td>
+                    <td className="muted">{s.phone || s.email}</td>
+                    <td className="num">
+                      <span className={`badge ${s.lead!.followUpOn! < today ? 'badge-warn' : 'badge-new'}`}>
+                        {s.lead!.followUpOn === today ? 'today' : `since ${formatDate(wallClockToUtc(s.lead!.followUpOn!, '12:00', tz), tz)}`}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <Link to="/leads">All leads</Link>
+          </div>
+        )}
 
         <div className="card stack">
           <h2>Students owing lessons</h2>

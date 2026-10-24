@@ -4,7 +4,7 @@ import { Link } from 'react-router';
 import { LessonForm } from '../components/LessonForm';
 import { useLessonHref } from '../components/LessonSheet';
 import { db } from '../firebase';
-import { studentName, useFormatTs, useQuery, useStudents, useTeachers } from '../hooks';
+import { studentName, useFormatTs, useQuery, useStudents, useTeachers, lessonStudents } from '../hooks';
 import { useSchoolId } from '../session';
 import { isLessonCancelled, type Lesson } from '../types';
 
@@ -81,7 +81,7 @@ export function Lessons() {
                   <Link to={lessonHref(l.id)}>{fmt(l.startAt)}</Link>
                   <span className="muted"> · {l.durationMin} min{l.seriesId ? ' · weekly' : ''}</span>
                 </td>
-                <td>{l.studentIds.map((id) => studentName(students.byId.get(id))).join(', ')}</td>
+                <td>{lessonStudents(l, students.byId)}</td>
                 <td>{teachers.byId.get(l.teacherId)?.displayName ?? '—'}</td>
                 <td>{l.isOnline ? 'Online' : 'In studio'}</td>
                 <td>

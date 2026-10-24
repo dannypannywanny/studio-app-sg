@@ -5,6 +5,7 @@ import { useLessonHref } from '../components/LessonSheet';
 import { addDays, applyTax, formatDate, formatMoney, resolveTax, wallDateOf, type LedgerType } from '@lessonkaki/shared';
 import { useSubjects } from '../components/LessonTypes';
 import { CreditBoxes } from '../components/CreditBoxes';
+import { LeadPanel } from '../components/LeadPanel';
 import { PortalAccess } from '../components/PortalAccess';
 import { call, db } from '../firebase';
 import { studentName, useDoc, useFormatTs, useQuery, useSchool, useTeachers, useTimeZone } from '../hooks';
@@ -353,12 +354,12 @@ export function StudentDetail() {
 
   return (
     <section className="stack">
-      <p>
-        <Link to="/students">← Students</Link>
-      </p>
+      <p>{s.status === 'lead' ? <Link to="/leads">← Leads</Link> : <Link to="/students">← Students</Link>}</p>
       <div className="page-head">
         <div>
-          <h1>{studentName(s)}</h1>
+          <h1>
+            {studentName(s)} {s.status === 'lead' && <span className="badge badge-lead">Lead</span>}
+          </h1>
           <p className="muted">{[s.email, s.phone].filter(Boolean).join(' · ')}</p>
         </div>
       </div>
@@ -386,7 +387,10 @@ export function StudentDetail() {
         </div>
       </div>
 
-      <PortalAccess studentId={studentId} hasLogin={Boolean((s as { uid?: string }).uid)} hasEmail={Boolean(s.email)} />
+      {(s.status === 'lead' || s.lead) && <LeadPanel studentId={studentId} student={s} />}
+      {s.status !== 'lead' && (
+        <PortalAccess studentId={studentId} hasLogin={Boolean((s as { uid?: string }).uid)} hasEmail={Boolean(s.email)} />
+      )}
 
       <StudentNotes key={s.notes ?? ''} studentId={studentId} notes={s.notes ?? ''} />
       <SellPackage studentId={studentId} />

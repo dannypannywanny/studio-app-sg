@@ -10,7 +10,7 @@ import { useRooms } from '../components/Rooms';
 import { useHolidays } from '../components/Holidays';
 import { TimeOffDetail, TimeOffForm, offEndMin, offLabel, offStartMin, useTimeOff, type PlacedOff } from '../components/TimeOff';
 import { db } from '../firebase';
-import { studentName, useQuery, useStudents, useTeachers, useTimeZone, type WithId } from '../hooks';
+import { studentName, useQuery, useStudents, useTeachers, useTimeZone, type WithId, lessonStudents } from '../hooks';
 import { useSchoolId, useSession } from '../session';
 import { isLessonCancelled, type Lesson } from '../types';
 
@@ -133,7 +133,7 @@ export function Calendar() {
         .map((l) => {
           const start = l.startAt.toDate();
           const time = wallTimeOf(start, tz);
-          const names = l.studentIds.map((id) => studentName(students.byId.get(id))).join(', ');
+          const names = lessonStudents(l, students.byId);
           return { l, date: wallDateOf(start, tz), time, startMin: minutesOf(time), names };
         }),
     [lessons.data, teacherFilter, roomFilter, tz, students.byId],

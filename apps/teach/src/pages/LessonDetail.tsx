@@ -558,6 +558,7 @@ export function LessonPanel({
                   ) : (
                     <span className="att-name">{studentName(s)}</span>
                   )}
+                  {a.trial && <span className="badge badge-trial">Trial</span>}
                   <span className={`badge badge-${a.status}`}>{STATUS_LABEL[a.status]}</span>
                   {a.makeUp && <span className="badge badge-active">Make-up given</span>}
                   {a.owed ? (
@@ -579,6 +580,7 @@ export function LessonPanel({
                     <PackageSelect
                       studentId={a.studentId}
                       charged={a.ledgerEntryId != null}
+                      trial={a.trial === true}
                       value={a.ledgerEntryId ? a.enrolmentId : (a.preferredEnrolmentId ?? null)}
                       disabled={busy !== null}
                       onChange={(enrolmentId) =>

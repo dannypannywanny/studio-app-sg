@@ -5,7 +5,7 @@ import { call } from '../firebase';
 import { useSchool } from '../hooks';
 import { useSchoolId, useSession } from '../session';
 
-type Outcome = 'invited' | 'already' | 'notFound' | 'archived' | 'noEmail' | 'sharedEmail' | 'staffAccount' | 'linkedElsewhere';
+type Outcome = 'invited' | 'already' | 'notFound' | 'archived' | 'lead' | 'noEmail' | 'sharedEmail' | 'staffAccount' | 'linkedElsewhere';
 
 const inviteStudents = call<{ schoolId: string; studentIds: string[] }, { results: { studentId: string; outcome: Outcome }[] }>('inviteStudents');
 
@@ -14,6 +14,7 @@ const MESSAGE: Record<Outcome, string> = {
   already: 'They already have access.',
   notFound: 'Student not found.',
   archived: 'Archived students cannot sign in.',
+  lead: 'Leads cannot sign in. Make them a student first.',
   noEmail: 'Add an email address first.',
   sharedEmail: 'Another student has the same email. Give each student their own address, then try again.',
   staffAccount: 'This email is a staff login. Use a different address for the student.',

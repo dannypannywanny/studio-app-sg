@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { formatDateTime } from '@lessonkaki/shared';
 import { call, db } from './firebase';
 import { useSchoolId, useSession } from './session';
-import type { School, Student, Teacher, Ts } from './types';
+import type { Lesson, School, Student, Teacher, Ts } from './types';
 
 export type WithId<T> = T & { id: string };
 
@@ -112,6 +112,12 @@ export function useTeachers() {
   const data = useMemo(() => (isTeacher ? (own.data ? [own.data] : []) : live.data), [isTeacher, own.data, live.data]);
   const byId = useMemo(() => new Map(data.map((t) => [t.id, t])), [data]);
   return { data, loading: isTeacher ? own.loading : live.loading, error: isTeacher ? own.error : live.error, byId };
+}
+
+/** Who's on a lesson, e.g. "Mei Lin, John Tan (Trial)". */
+export function lessonStudents(l: Pick<Lesson, 'studentIds' | 'trialStudentIds'>, byId: Map<string, Student>): string {
+  const trials = new Set(l.trialStudentIds ?? []);
+  return l.studentIds.map((id) => `${studentName(byId.get(id))}${trials.has(id) ? ' (Trial)' : ''}`).join(', ');
 }
 
 export function studentName(s: Pick<Student, 'firstName' | 'lastName' | 'preferredName'> | undefined): string {

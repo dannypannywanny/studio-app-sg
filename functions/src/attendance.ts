@@ -72,6 +72,8 @@ export async function prepareTransition(
   if (wantsCharge && !holdsCharge) {
     const preferred = (attendee.get('preferredEnrolmentId') as string | null | undefined) ?? null;
     const lot = pickLot(await readActiveLots(ct, attendee.id), lessonStart.toMillis(), preferred);
+    // A trial with no package to pay for it is free: nothing taken, nothing owed.
+    if (!lot && attendee.get('trial') === true) return { action: 'none', lot: null };
     if (!lot && !policy.allowOwedLessons) {
       throw new HttpsError('failed-precondition', 'This student has no credits left');
     }
@@ -318,8 +320,10 @@ export interface AttendeeInput {
   studentId: string;
 }
 
-export function newAttendeeDoc(schoolId: string, lessonId: string, studentId: string, startAt: Timestamp, source = 'admin') {
+/** `trial`: a lead's trial lesson (free unless they have a package for it). */
+export function newAttendeeDoc(schoolId: string, lessonId: string, studentId: string, startAt: Timestamp, source = 'admin', trial = false) {
   return {
+    ...(trial ? { trial: true } : {}),
     schoolId,
     lessonId,
     studentId,
@@ -430,6 +434,7 @@ export async function addAttendee(
     if (studentSnap.get('status') === 'archived') throw new HttpsError('failed-precondition', 'This student is archived');
     const lesson = lessonSnap.data()!;
     if (lesson.status === 'cancelled') throw new HttpsError('failed-precondition', 'This lesson is cancelled');
+    const trial = studentSnap.get('status') === 'lead';
 
     const current = attendeeSnap.exists ? (attendeeSnap.get('status') as AttendanceStatus) : null;
     if (current === 'booked' || current === 'present' || current === 'absent') return { added: false };
@@ -445,7 +450,8 @@ export async function addAttendee(
       tx.update(attendeeRef, { ...update, cancelledAt: null, cancelledBy: null });
       rev = update.rev as number;
     } else {
-      tx.create(attendeeRef, newAttendeeDoc(input.schoolId, input.lessonId, input.studentId, lesson.startAt as Timestamp));
+      tx.create(attendeeRef, newAttendeeDoc(input.schoolId, input.lessonId, input.studentId, lesson.startAt as Timestamp, 'admin', trial));
+      if (trial) markTrialBooked(tx, studentSnap);
     }
     const startAt = (lesson.startAt as Timestamp).toDate();
     // Putting someone on a past lesson is record-keeping, not a booking.
@@ -463,6 +469,7 @@ export async function addAttendee(
     const statuses = siblings.filter((d) => d.id !== input.studentId).map((d) => d.get('status') as AttendanceStatus);
     tx.update(lessonRef, {
       studentIds: FieldValue.arrayUnion(input.studentId),
+      ...(trial && !attendeeSnap.exists ? { trialStudentIds: FieldValue.arrayUnion(input.studentId) } : {}),
       capacity: Math.max((lesson.capacity as number | undefined) ?? 1, studentIds.length),
       ...lessonStateOf([...statuses, 'booked']),
       // A one-off change to a series occurrence: later series edits leave this lesson alone.
@@ -472,6 +479,12 @@ export async function addAttendee(
     audit(tx, school, actor, 'addAttendee', `lessons/${input.lessonId}/attendees/${input.studentId}`, { from: current });
     return { added: true };
   });
+}
+
+/** A new lead booked onto a lesson moves to "Trial booked". */
+export function markTrialBooked(tx: FirebaseFirestore.Transaction, student: DocumentSnapshot): void {
+  const stage = student.get('lead.stage') as string | undefined;
+  if (!stage || stage === 'new') tx.update(student.ref, { 'lead.stage': 'trial', updatedAt: now() });
 }
 
 /** Takes a student off a lesson. A charge is restored; the attendee doc stays (status removed) for history. */

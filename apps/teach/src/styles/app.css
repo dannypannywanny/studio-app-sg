@@ -222,6 +222,11 @@ input[type='color'] { width: 56px; height: var(--control-h); padding: 3px; borde
 .badge-absent, .badge-warn, .badge-partial, .badge-sent, .badge-lateCancelled, .badge-unmarked { background: var(--due-bg); color: var(--due-fg); }
 .badge-expired, .badge-void, .badge-overdue, .badge-cancelled-lesson { background: var(--warn-bg); color: var(--warn-fg); }
 .badge-cancelled, .badge-removed, .badge-completed, .badge-inactive, .badge-archived { background: var(--muted-bg); color: var(--muted-fg); }
+.badge-lead, .badge-new, .badge-trial { background: var(--due-bg); color: var(--due-fg); }
+.badge-won { background: var(--ok-bg); color: var(--ok-fg); }
+.badge-lost { background: var(--muted-bg); color: var(--muted-fg); }
+
+.plain-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-1); }
 
 .inline-confirm { display: flex; flex-direction: column; gap: var(--space-2); max-width: 380px; }
 

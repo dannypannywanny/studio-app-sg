@@ -83,7 +83,7 @@ function StudentStats({ students }: { students: Student[] }) {
   const today = wallDateOf(new Date(), tz);
   const monday = startOfWeek(today);
   const monthStart = `${today.slice(0, 7)}-01`;
-  const current = students.filter((s) => s.status !== 'archived');
+  const current = students.filter((s) => s.status !== 'archived' && s.status !== 'lead');
   const joined = current.map((s) => joinedOn(s, tz));
   const tiles: [string, number][] = [
     ['Total students', current.length],
@@ -112,6 +112,8 @@ export function Students() {
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
     return data
+      // Leads have their own page until they become students.
+      .filter((s) => s.status !== 'lead')
       .filter((s) => !q || `${studentName(s)} ${s.email ?? ''} ${s.phone ?? ''}`.toLowerCase().includes(q))
       .sort((a, b) => studentName(a).localeCompare(studentName(b)));
   }, [data, search]);

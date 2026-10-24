@@ -45,7 +45,13 @@ export type EnrolmentStatus = 'active' | 'completed' | 'expired' | 'void';
 export type InvoiceStatus = 'draft' | 'sent' | 'partial' | 'paid' | 'void';
 export type LessonStatus = 'scheduled' | 'cancelled';
 export type AttendanceState = 'unmarked' | 'partial' | 'marked';
-export type StudentStatus = 'active' | 'inactive' | 'archived';
+/** `lead`: a prospect (enquiry or trial), not yet a student; never gets a portal login. */
+export type StudentStatus = 'active' | 'inactive' | 'archived' | 'lead';
+
+/** Where a lead is: enquired, trial booked, became a student (won) or didn't (lost). */
+export const LEAD_STAGES = ['new', 'trial', 'won', 'lost'] as const;
+export type LeadStage = (typeof LEAD_STAGES)[number];
+export const LEAD_STAGE_LABEL: Record<LeadStage, string> = { new: 'New', trial: 'Trial booked', won: 'Won', lost: 'Lost' };
 
 /** Function-maintained, read-only to clients. */
 export interface StudentSummary {

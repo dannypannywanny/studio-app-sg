@@ -21,6 +21,7 @@ const HELP: Record<InviteOutcome, string> = {
   already: 'already have access',
   notFound: 'student not found',
   archived: 'archived, skipped',
+  lead: 'a lead, skipped: make them a student in teach first',
   noEmail: 'no usable email: add one in teach, then re-run',
   sharedEmail: 'email shared with another student: give each their own address in teach, then re-run',
   staffAccount: 'email belongs to a staff login: use a different address for the student',

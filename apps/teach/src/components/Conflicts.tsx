@@ -3,7 +3,7 @@
 import { collection, query, Timestamp, where } from 'firebase/firestore';
 import { addDays, wallClockToUtc, wallTimeOf } from '@lessonkaki/shared';
 import { db } from '../firebase';
-import { studentName, useQuery, useStudents, useTimeZone } from '../hooks';
+import { studentName, useQuery, useStudents, useTimeZone, lessonStudents } from '../hooks';
 import { useSchoolId, useSession } from '../session';
 import type { Lesson } from '../types';
 import { useRooms } from './Rooms';
@@ -88,7 +88,7 @@ export function ConflictBanner({
           <li key={l.id}>
             {l.teacherId === teacherId ? 'Lesson' : `${places.byId.get(roomId ?? '')?.name ?? 'Room'} in use`} {fmt(l.startAt.toMillis())}–
             {fmt(l.endAt.toMillis())} ·{' '}
-            {l.studentIds.map((id) => studentName(students.byId.get(id))).join(', ') || 'no students'}
+            {lessonStudents(l, students.byId) || 'no students'}
           </li>
         ))}
         {holiday && <li>Public holiday: {holiday} (the studio is closed)</li>}

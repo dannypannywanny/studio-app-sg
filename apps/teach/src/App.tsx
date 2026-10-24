@@ -5,6 +5,7 @@ import { Layout } from './Layout';
 import { Calendar } from './pages/Calendar';
 import { Dashboard } from './pages/Dashboard';
 import { ImportStudents } from './pages/ImportStudents';
+import { Leads } from './pages/Leads';
 import { Packages } from './pages/Packages';
 import { Reports } from './pages/ReportsHome';
 import { MyPay } from './pages/MyPay';
@@ -67,6 +68,7 @@ export function App() {
             <Route path="students" element={<Students />} />
             <Route path="students/import" element={<ImportStudents />} />
             <Route path="students/:studentId" element={<StudentDetail />} />
+            <Route path="leads" element={<Leads />} />
             <Route path="lessons" element={<Lessons />} />
             <Route path="lessons/:lessonId" element={<LessonDetail />} />
             <Route path="invoices" element={<Invoices />} />
