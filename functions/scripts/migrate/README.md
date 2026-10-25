@@ -120,5 +120,11 @@ lot's leftover sessions expire with its date, but lessons booked inside that val
 still need them; `reopenForPending` gives exactly that many back (oldest lesson first, lot kept alive 180
 days, owed lessons settled). `applyReplay` does this itself after expiring.
 
+**Paid invoices** (`backfill-invoices.ts`): creates the paid Classcard invoices as `cc-<number>` (with Classcard's
+discount from `classcard-discounts.tsv`) and links each replayed package to its invoice, including packages split
+into rows (`cc-<invoiceId>-<n>`) and S$0 / 100%-discount invoices with no package. `--packages <json>` gives such an
+invoice its package (a `migrate` lot; expires at once if its date has passed). Dry run unless `--apply`:
+`pnpm --filter functions exec tsx scripts/migrate/backfill-invoices.ts --project class-app-sg --raw <dir> [--packages <json>] [--apply]`.
+
 Python helpers for the review sheets live in `py/` (`months_sheet.py`, `reconcile_sheet.py`, `review_actions.py`);
 they read `migration/raw/replay-plan.json` and `replay-state.json` (gitignored) and need `openpyxl`.
