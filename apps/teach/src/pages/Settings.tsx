@@ -331,6 +331,10 @@ function RemindersForm({ raw, canEdit }: { raw: unknown; canEdit: boolean }) {
     >
       <fieldset disabled={!canEdit} className="form-grid span-all fieldset-plain">
         <label className="field checkbox span-all">
+          <input type="checkbox" checked={r.confirmations} onChange={(e) => set({ confirmations: e.target.checked })} />
+          <span>Email students a confirmation when staff book them into a lesson or trial</span>
+        </label>
+        <label className="field checkbox span-all">
           <input type="checkbox" checked={r.lessons} onChange={(e) => set({ lessons: e.target.checked })} />
           <span>Email students before each lesson</span>
         </label>

@@ -12,7 +12,7 @@ import type { MailSender } from './alerts';
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 
-interface SchoolCtx {
+export interface SchoolCtx {
   id: string;
   name: string;
   from: string;
@@ -22,7 +22,7 @@ interface SchoolCtx {
   settings: ReminderSettings;
 }
 
-function ctxOf(s: DocumentSnapshot, defaultFrom: string): SchoolCtx {
+export function ctxOf(s: DocumentSnapshot, defaultFrom: string): SchoolCtx {
   const learn = (s.get('hosts.learn') as string | null | undefined) ?? null;
   return {
     id: s.id,
@@ -37,7 +37,7 @@ function ctxOf(s: DocumentSnapshot, defaultFrom: string): SchoolCtx {
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
-function render(school: SchoolCtx, subject: string, lines: string[], cta: { label: string; href: string } | null) {
+export function render(school: SchoolCtx, subject: string, lines: string[], cta: { label: string; href: string } | null) {
   const text = [...lines, ...(cta ? ['', `${cta.label}: ${cta.href}`] : []), '', `— ${school.name}`].join('\n');
   const html =
     `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;font-size:15px;line-height:1.55;color:#161616;max-width:520px">` +

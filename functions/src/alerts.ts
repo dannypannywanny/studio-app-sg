@@ -119,6 +119,8 @@ export interface OutgoingMail {
   text: string;
   html: string;
   idempotencyKey: string;
+  /** Where replies go (the school's own address), when the From address is a no-reply one. */
+  replyTo?: string;
 }
 
 export interface MailSender {
@@ -150,7 +152,7 @@ export function resendSender(apiKey: string, fetchFn: typeof fetch = fetch): Mai
             'Content-Type': 'application/json',
             'Idempotency-Key': mail.idempotencyKey,
           },
-          body: JSON.stringify({ from: mail.from, to: mail.to, subject: mail.subject, text: mail.text, html: mail.html }),
+          body: JSON.stringify({ from: mail.from, to: mail.to, subject: mail.subject, text: mail.text, html: mail.html, ...(mail.replyTo ? { reply_to: mail.replyTo } : {}) }),
         });
       } catch (err) {
         throw new SendError(`Resend unreachable: ${(err as Error).message}`, false);

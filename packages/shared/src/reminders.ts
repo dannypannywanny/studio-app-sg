@@ -2,6 +2,8 @@
 // schools/{id}.reminders; everything is off until the owner turns it on.
 
 export interface ReminderSettings {
+  /** Confirmation email to the student when staff book them into a lesson or trial. */
+  confirmations: boolean;
   lessons: boolean;
   /** Hours before the lesson start. */
   lessonHoursBefore: number;
@@ -15,6 +17,7 @@ export interface ReminderSettings {
 }
 
 export const DEFAULT_REMINDERS: ReminderSettings = {
+  confirmations: false,
   lessons: false,
   lessonHoursBefore: 24,
   payments: false,
@@ -29,6 +32,7 @@ const int = (v: unknown, min: number, max: number, fallback: number) =>
 export function resolveReminders(raw: unknown): ReminderSettings {
   const r = (raw ?? {}) as Record<string, unknown>;
   return {
+    confirmations: r.confirmations === true,
     lessons: r.lessons === true,
     lessonHoursBefore: int(r.lessonHoursBefore, 1, 168, DEFAULT_REMINDERS.lessonHoursBefore),
     payments: r.payments === true,

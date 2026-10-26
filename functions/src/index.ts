@@ -19,6 +19,7 @@ import * as checkout from './checkout';
 import * as discountCodes from './discountCodes';
 import * as events from './events';
 import * as holidays from './holidays';
+import * as confirmations from './confirmations';
 import * as reminders from './reminders';
 import * as teachers from './teachers';
 import * as credits from './credits';
@@ -445,7 +446,10 @@ export const onAlertCreated = onDocumentCreated(
   async (event) => {
     const key = RESEND_API_KEY.value();
     const { schoolId, alertId } = event.params;
-    await alerts.deliverAlert(db(), key ? alerts.resendSender(key) : null, schoolId, alertId, { defaultFrom: DEFAULT_ALERT_FROM });
+    const sender = key ? alerts.resendSender(key) : null;
+    await alerts.deliverAlert(db(), sender, schoolId, alertId, { defaultFrom: DEFAULT_ALERT_FROM });
+    // Separate from the owner's alert (own setting, own record on the doc); a failure here retries the trigger.
+    await confirmations.deliverStudentConfirmations(db(), sender, schoolId, alertId, DEFAULT_ALERT_FROM);
   },
 );
 
