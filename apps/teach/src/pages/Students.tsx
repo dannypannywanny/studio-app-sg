@@ -1,11 +1,11 @@
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { addDoc, collection, query, serverTimestamp } from 'firebase/firestore';
 import { useMemo, useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router';
-import { addDays, startOfWeek, wallDateOf } from '@lessonkaki/shared';
+import { Link, useNavigate, useSearchParams } from 'react-router';
+import { addDays, formatDate, startOfWeek, wallClockToUtc, wallDateOf } from '@lessonkaki/shared';
 import { db } from '../firebase';
-import { studentName, useStudents, useTimeZone } from '../hooks';
-import type { Student } from '../types';
-import { useSchoolId } from '../session';
+import { studentName, useQuery, useStudents, useTimeZone } from '../hooks';
+import type { Enrolment, Student } from '../types';
+import { useSchoolId, useSession } from '../session';
 
 function NewStudentForm({ onDone }: { onDone: () => void }) {
   const schoolId = useSchoolId();
@@ -78,45 +78,86 @@ function joinedOn(s: Student, tz: string): string | null {
   return s.createdOn ?? (s.createdAt ? wallDateOf(s.createdAt.toDate(), tz) : null);
 }
 
-function StudentStats({ students }: { students: Student[] }) {
-  const tz = useTimeZone();
-  const today = wallDateOf(new Date(), tz);
-  const monday = startOfWeek(today);
-  const monthStart = `${today.slice(0, 7)}-01`;
-  const current = students.filter((s) => s.status !== 'archived' && s.status !== 'lead');
-  const joined = current.map((s) => joinedOn(s, tz));
-  const tiles: [string, number][] = [
-    ['Total students', current.length],
-    ['Active', current.filter((s) => s.status === 'active').length],
-    ['New this week', joined.filter((d) => d && d >= monday).length],
-    ['New this month', joined.filter((d) => d && d >= monthStart).length],
-    ['New last 30 days', joined.filter((d) => d && d > addDays(today, -30)).length],
-  ];
-  return (
-    <div className="tiles">
-      {tiles.map(([label, n]) => (
-        <div key={label} className="tile">
-          <span className="tile-label">{label}</span>
-          <span className="tile-value">{n}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
+type Filter = 'all' | 'active' | 'week' | 'month' | '30d' | 'nopackage';
+type Sort = 'newest' | 'name';
+
+const FILTERS: [Filter, string][] = [
+  ['all', 'All'],
+  ['week', 'New this week'],
+  ['month', 'New this month'],
+  ['30d', 'New last 30 days'],
+  ['nopackage', 'No package yet'],
+];
 
 export function Students() {
+  const schoolId = useSchoolId();
+  const { role } = useSession();
+  const tz = useTimeZone();
   const { data, loading, error } = useStudents();
+  // Teachers can't read enrolments, so "no package" is staff-only.
+  const canSeePackages = role !== 'teacher';
+  const enrolments = useQuery<Enrolment>(canSeePackages ? `enrolments-all:${schoolId}` : null, () =>
+    query(collection(db, 'schools', schoolId, 'enrolments')),
+  );
+  const [params, setParams] = useSearchParams();
+  const filter = (params.get('show') as Filter | null) ?? 'all';
+  const sort = (params.get('sort') as Sort | null) ?? 'newest';
+  const setParam = (k: string, v: string, dflt: string) =>
+    setParams(
+      (p) => {
+        if (v === dflt) p.delete(k);
+        else p.set(k, v);
+        return p;
+      },
+      { replace: true },
+    );
   const [search, setSearch] = useState('');
   const [adding, setAdding] = useState(false);
 
-  const rows = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return data
-      // Leads have their own page until they become students.
-      .filter((s) => s.status !== 'lead')
-      .filter((s) => !q || `${studentName(s)} ${s.email ?? ''} ${s.phone ?? ''}`.toLowerCase().includes(q))
-      .sort((a, b) => studentName(a).localeCompare(studentName(b)));
-  }, [data, search]);
+  const today = wallDateOf(new Date(), tz);
+  const since: Partial<Record<Filter, string>> = {
+    week: startOfWeek(today),
+    month: `${today.slice(0, 7)}-01`,
+    '30d': addDays(today, -29),
+  };
+  const bought = useMemo(() => new Set(enrolments.data.map((e) => e.studentId)), [enrolments.data]);
+  const noPackage = (s: Student & { id: string }) => canSeePackages && !enrolments.loading && !bought.has(s.id);
+
+  // Leads have their own page until they become students.
+  const students = useMemo(() => data.filter((s) => s.status !== 'lead'), [data]);
+  const inFilter = (s: Student & { id: string }, f: Filter): boolean => {
+    if (f === 'all') return true;
+    if (s.status === 'archived') return false;
+    if (f === 'active') return s.status === 'active';
+    if (f === 'nopackage') return noPackage(s);
+    const d = joinedOn(s, tz);
+    return !!d && d >= since[f]!;
+  };
+  const count = (f: Filter) => students.filter((s) => inFilter(s, f)).length;
+
+  const q = search.trim().toLowerCase();
+  const rows = students
+    .filter((s) => inFilter(s, filter))
+    .filter((s) => !q || `${studentName(s)} ${s.email ?? ''} ${s.phone ?? ''}`.toLowerCase().includes(q))
+    .map((s) => ({ s, joined: joinedOn(s, tz) }))
+    .sort((a, b) =>
+      sort === 'newest'
+        ? (b.joined ?? '').localeCompare(a.joined ?? '') ||
+          (b.s.createdAt?.toMillis() ?? 0) - (a.s.createdAt?.toMillis() ?? 0) ||
+          studentName(a.s).localeCompare(studentName(b.s))
+        : studentName(a.s).localeCompare(studentName(b.s)),
+    );
+
+  const current = students.filter((s) => s.status !== 'archived').length;
+  const tiles: [Filter, string, number][] = [
+    ['all', 'Total students', current],
+    ['active', 'Active', count('active')],
+    ['week', 'New this week', count('week')],
+    ['month', 'New this month', count('month')],
+    ['30d', 'New last 30 days', count('30d')],
+  ];
+  const showDate = (d: string) => formatDate(wallClockToUtc(d, '12:00', tz), tz);
+  const pick = (f: Filter) => setParam('show', f, 'all');
 
   return (
     <section className="stack">
@@ -133,15 +174,47 @@ export function Students() {
           </div>
         )}
       </div>
-      {!loading && <StudentStats students={data} />}
+      {!loading && (
+        <div className="tiles">
+          {tiles.map(([f, label, n]) => (
+            <button
+              key={f}
+              type="button"
+              className={`tile tile-link tile-btn ${filter === f && f !== 'all' ? 'on' : ''}`}
+              aria-pressed={filter === f}
+              onClick={() => pick(filter === f ? 'all' : f)}
+            >
+              <span className="tile-label">{label}</span>
+              <span className="tile-value">{n}</span>
+            </button>
+          ))}
+        </div>
+      )}
       {adding && <NewStudentForm onDone={() => setAdding(false)} />}
-      <input
-        className="search"
-        type="search"
-        placeholder="Search by name, email or phone"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-      />
+      <div className="row">
+        <div className="tabs" role="group" aria-label="Show">
+          {FILTERS.filter(([f]) => f !== 'nopackage' || canSeePackages).map(([f, label]) => (
+            <button key={f} type="button" className={`tab ${filter === f ? 'on' : ''}`} aria-pressed={filter === f} onClick={() => pick(f)}>
+              {label}
+              {f !== 'all' && !loading && ` · ${count(f)}`}
+            </button>
+          ))}
+        </div>
+        <select aria-label="Sort" value={sort} onChange={(e) => setParam('sort', e.target.value, 'newest')}>
+          <option value="newest">Newest first</option>
+          <option value="name">Name A–Z</option>
+        </select>
+        <input
+          className="search"
+          type="search"
+          placeholder="Search by name, email or phone"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+      </div>
+      {filter === 'nopackage' && (
+        <p className="muted">Students who have never had a package. Good people to get in touch with.</p>
+      )}
       {error && <p className="error">{error.message}</p>}
       {loading ? (
         <p className="muted">Loading…</p>
@@ -152,6 +225,7 @@ export function Students() {
           <thead>
             <tr>
               <th>Name</th>
+              <th>Joined</th>
               <th>Email</th>
               <th>Phone</th>
               <th className="num">Credits</th>
@@ -160,13 +234,20 @@ export function Students() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((s) => (
+            {rows.map(({ s, joined }) => (
               <tr key={s.id}>
                 <td>
                   <Link to={`/students/${s.id}`}>{studentName(s)}</Link>
+                  {noPackage(s) && s.status !== 'archived' && (
+                    <>
+                      {' '}
+                      <span className="badge badge-warn">No package</span>
+                    </>
+                  )}
                 </td>
-                <td>{s.email}</td>
-                <td>{s.phone}</td>
+                <td className="nowrap">{joined ? showDate(joined) : '—'}</td>
+                <td>{s.email && <a href={`mailto:${s.email}`}>{s.email}</a>}</td>
+                <td>{s.phone && <a href={`tel:${s.phone.replace(/\s+/g, '')}`}>{s.phone}</a>}</td>
                 <td className="num">{s.summary?.sessionsAvailable ?? 0}</td>
                 <td className="num">{s.summary?.sessionsOwed ? <span className="badge badge-warn">{s.summary.sessionsOwed}</span> : 0}</td>
                 <td>
