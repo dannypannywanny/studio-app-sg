@@ -52,6 +52,20 @@ export interface Package {
   active: boolean;
 }
 
+/** schools/{id}/discountCodes/{CODE}; the doc id is the upper-cased code. Written by saveDiscountCode only. */
+export interface DiscountCode {
+  code: string;
+  kind: 'percent' | 'amount';
+  /** Percent (1-100) or cents. */
+  value: number;
+  /** Empty = every package. */
+  packageIds?: string[];
+  validUntil?: string | null;
+  maxUses?: number | null;
+  usedCount?: number;
+  active?: boolean;
+}
+
 export interface Student {
   firstName: string;
   lastName: string;

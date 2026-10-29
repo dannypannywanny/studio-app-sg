@@ -16,6 +16,7 @@ import { requireRole } from './auth';
 import * as attendance from './attendance';
 import * as booking from './booking';
 import * as checkout from './checkout';
+import * as discountCodes from './discountCodes';
 import * as holidays from './holidays';
 import * as reminders from './reminders';
 import * as teachers from './teachers';
@@ -219,6 +220,7 @@ const SellPackage = z.object({
   idempotencyKey: z.string().min(8).max(100).regex(/^[A-Za-z0-9_-]+$/),
   validUntil: z.string().refine(isWallDate).nullable().optional(),
   discount: z.object({ kind: z.enum(['percent', 'amount']), value: z.number().min(0).max(100_000_000) }).nullable().optional(),
+  discountCode: z.string().trim().max(40).nullable().optional(),
   note: z.string().max(1000).nullable().optional(),
 });
 
@@ -464,7 +466,7 @@ export const sendSignInLink = onCall({ secrets: [RESEND_API_KEY] }, async (req) 
 // JSON keyed by schoolId ({ "sywh": { "apiKey": "...", "salt": "...", "mode": "live" } }).
 const HITPAY_KEYS = defineSecret('HITPAY_KEYS');
 
-const StartCheckout = z.object({ schoolId: id, packageId: id });
+const StartCheckout = z.object({ schoolId: id, packageId: id, code: z.string().trim().max(40).nullish() });
 
 export const startCheckout = onCall({ secrets: [HITPAY_KEYS] }, async (req) => {
   const input = parse(StartCheckout, req.data);
@@ -473,6 +475,30 @@ export const startCheckout = onCall({ secrets: [HITPAY_KEYS] }, async (req) => {
   if (!origin) throw new HttpsError('invalid-argument', 'Open the booking page in a browser');
   const keys = checkout.parseKeyRing(HITPAY_KEYS.value())[input.schoolId];
   return checkout.startCheckout(db(), keys ? checkout.hitpayClient(keys) : null, { ...input, host: new URL(origin).hostname }, actor);
+});
+
+// Discount codes. Staff create and switch them off; a student checks one against a package on the buy page.
+const SaveDiscountCode = z.object({
+  schoolId: id,
+  code: z.string().trim().min(2).max(40),
+  kind: z.enum(['percent', 'amount']),
+  value: z.number().int().min(1).max(100_000_000),
+  packageIds: z.array(id).max(100),
+  validUntil: z.string().refine(isWallDate).nullable(),
+  maxUses: z.number().int().min(1).max(1_000_000).nullable(),
+  active: z.boolean(),
+});
+
+export const saveDiscountCode = onCall(async (req) => {
+  const input = parse(SaveDiscountCode, req.data);
+  const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
+  return discountCodes.saveDiscountCode(db(), input, actor);
+});
+
+export const previewDiscountCode = onCall(async (req) => {
+  const input = parse(z.object({ schoolId: id, packageId: id, code: z.string().trim().min(1).max(40) }), req.data);
+  requireRole(req.auth, input.schoolId, ['student', 'owner', 'admin']);
+  return discountCodes.previewDiscountCode(db(), input);
 });
 
 /** HitPay calls this (registered in the HitPay dashboard for payment_request.completed). */

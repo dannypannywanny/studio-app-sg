@@ -54,6 +54,9 @@ service cloud.firestore {
       match /subjects/{id} { allow read: if role(s) != null; allow write: if isStaff(s); }
       match /locations/{id} { allow read: if role(s) != null; allow write: if isStaff(s); }
       match /packages/{id} { allow read: if role(s) != null; allow write: if isStaff(s); }
+      // Discount codes: staff read them; students never list them (previewDiscountCode checks one for them).
+      // Writes go through saveDiscountCode / sellPackage so usedCount can't be edited by hand.
+      match /discountCodes/{id} { allow read: if isStaff(s); allow write: if false; }
 
       match /students/{id} {
         allow read: if isStaff(s) || myStudent(s) == id;

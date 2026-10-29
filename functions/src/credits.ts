@@ -1,11 +1,12 @@
 // Package sales: invoice + lot + grant, then settle the oldest owed lessons onto the new lot.
 // Credit writes go through CreditTx (creditTx.ts); attendance lives in attendance.ts.
 import { applyTax, resolveTax, wallClockToUtc } from '@lessonkaki/shared';
-import { Timestamp, type Firestore } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
 import { NO_EXPIRY } from '@lessonkaki/shared';
 import { CreditTx, readOwed } from './creditTx';
 import { audit, notFound, now, readAll, schoolRef, type Actor } from './db';
+import { assertCodeUsable, discountCentsFor, normaliseCode } from './discountCodes';
 
 const DAY_MS = 86_400_000;
 
@@ -25,6 +26,12 @@ export interface SellPackageInput {
   validUntil?: string | null;
   /** Off the package price: a percentage (0-100) or an amount in cents. */
   discount?: { kind: 'percent' | 'amount'; value: number } | null;
+  /**
+   * A discount code (discountCodes.ts) instead of `discount`: checked here and counted as used. The HitPay
+   * webhook passes the `discount` the student was quoted along with the code, and the sale is counted without
+   * re-checking, because the student already paid that price.
+   */
+  discountCode?: string | null;
   /** Staff note, kept on the invoice and the package. */
   note?: string | null;
 }
@@ -103,13 +110,17 @@ export async function sellPackage(
     }
 
     const label = await packageLabel(tx, school, pkg);
+    const timeZone = (schoolSnap.get('timezone') as string | undefined) ?? 'Asia/Singapore';
+    const codeRef = input.discountCode ? school.collection('discountCodes').doc(normaliseCode(input.discountCode)) : null;
+    const codeSnap = codeRef ? await tx.get(codeRef) : null;
+    let discount = input.discount;
+    if (codeRef && !input.paidOnline) discount = assertCodeUsable(codeSnap!.data(), input.packageId, timeZone, at);
     const ct = new CreditTx(tx, school, actor, at);
     const owed = await readOwed(ct, input.schoolId, input.studentId);
 
     // ---- writes ----
     const nowTs = Timestamp.fromDate(at);
     const validityDays = pkg.validityDays as number | null | undefined;
-    const timeZone = (schoolSnap.get('timezone') as string | undefined) ?? 'Asia/Singapore';
     const validUntil =
       input.validUntil === undefined
         ? Timestamp.fromDate(validityDays ? new Date(at.getTime() + validityDays * DAY_MS) : NO_EXPIRY)
@@ -119,10 +130,8 @@ export async function sellPackage(
             Timestamp.fromDate(new Date(wallClockToUtc(input.validUntil, '00:00', timeZone).getTime() + DAY_MS - 1));
     if (validUntil.toMillis() < at.getTime()) throw new HttpsError('invalid-argument', 'The expiry date is in the past');
     const subtotalCents = pkg.priceCents as number;
-    const d = input.discount;
-    const discountCents = !d
-      ? 0
-      : Math.min(subtotalCents, Math.max(0, d.kind === 'percent' ? Math.round((subtotalCents * Math.min(d.value, 100)) / 100) : Math.round(d.value)));
+    const discountCents = discount ? discountCentsFor(subtotalCents, discount) : 0;
+    if (codeRef && codeSnap!.exists) tx.update(codeRef, { usedCount: FieldValue.increment(1), updatedAt: now() });
     // Tax as the school has it set today; the invoice keeps its own copy so later setting changes don't touch it.
     const tax = resolveTax(schoolSnap.get('tax'));
     const { taxCents, totalCents: priceCents } = applyTax(subtotalCents - discountCents, tax);
@@ -151,6 +160,7 @@ export async function sellPackage(
       ],
       subtotalCents,
       discountCents,
+      discountCode: codeRef && discountCents > 0 ? codeRef.id : null,
       taxCents,
       tax: tax.enabled ? { rate: tax.rate, label: tax.label, inclusive: tax.inclusive, regNo: tax.regNo } : null,
       note,

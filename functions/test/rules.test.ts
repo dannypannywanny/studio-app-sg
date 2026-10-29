@@ -146,6 +146,18 @@ describe('email alerts outbox', () => {
   });
 });
 
+describe('discount codes', () => {
+  it('staff read them; nobody writes them from a client; teachers, students and other schools see nothing', async () => {
+    await assertSucceeds(getDoc(doc(owner(), `schools/${A}/discountCodes/PROMO`)));
+    await assertSucceeds(getDoc(doc(admin(), `schools/${A}/discountCodes/PROMO`)));
+    await assertFails(getDoc(doc(teacher(), `schools/${A}/discountCodes/PROMO`)));
+    await assertFails(getDocs(collection(student(), `schools/${A}/discountCodes`)));
+    await assertFails(getDoc(doc(owner(), `schools/${B}/discountCodes/PROMO`)));
+    await assertFails(setDoc(doc(owner(), `schools/${A}/discountCodes/PROMO`), { kind: 'percent', value: 100, usedCount: 0 }));
+    await assertFails(updateDoc(doc(admin(), `schools/${A}/discountCodes/PROMO`), { usedCount: 0 }));
+  });
+});
+
 describe('teacher scoping', () => {
   it('sees own lessons and their attendees, not other teachers lessons, students or money', async () => {
     await assertSucceeds(getDoc(doc(teacher(), `schools/${A}/lessons/l1`)));
