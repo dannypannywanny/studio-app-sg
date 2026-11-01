@@ -49,9 +49,10 @@ export function LeadPanel({ studentId, student }: { studentId: string; student: 
     if (!(await save({ status: 'active', 'lead.stage': 'won', 'lead.followUpOn': null, 'lead.closedAt': serverTimestamp() }))) return;
     if (role !== 'owner') return setError('Now a student, but they have no portal login yet: ask the owner to give portal access.');
     try {
-      const { results } = await inviteStudents({ schoolId, studentIds: [studentId] });
+      const { results } = await inviteStudents({ schoolId, studentIds: [studentId], welcome: true });
       const outcome = results[0]?.outcome ?? 'notFound';
       if (outcome !== 'invited' && outcome !== 'already') setError(`Now a student, but no portal login yet. ${MESSAGE[outcome]}`);
+      else if (outcome === 'invited' && !results[0]?.welcomed) setError('Now a student with a portal login, but the welcome email could not be sent: tell them to sign in at the student site.');
     } catch (err) {
       setError(`Now a student, but the portal login failed: ${(err as Error).message}`);
     }

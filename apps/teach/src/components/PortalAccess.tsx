@@ -1,5 +1,5 @@
-// Student portal (learn site) access for one student: creates their login with student claims. Sends
-// no email: the student signs in on the learn site with this email and gets Firebase's link.
+// Student portal (learn site) access for one student: creates their login with student claims and emails
+// them how to sign in (on the learn site, with this email).
 import { useState } from 'react';
 import { call } from '../firebase';
 import { useSchool } from '../hooks';
@@ -7,7 +7,7 @@ import { useSchoolId, useSession } from '../session';
 
 export type Outcome = 'invited' | 'already' | 'notFound' | 'archived' | 'lead' | 'noEmail' | 'sharedEmail' | 'staffAccount' | 'linkedElsewhere';
 
-export const inviteStudents = call<{ schoolId: string; studentIds: string[] }, { results: { studentId: string; outcome: Outcome }[] }>('inviteStudents');
+export const inviteStudents = call<{ schoolId: string; studentIds: string[]; welcome?: boolean }, { results: { studentId: string; outcome: Outcome; welcomed?: boolean }[] }>('inviteStudents');
 
 export const MESSAGE: Record<Outcome, string> = {
   invited: 'Done. They can sign in now with this email.',
@@ -33,9 +33,11 @@ export function PortalAccess({ studentId, hasLogin, hasEmail }: { studentId: str
     setBusy(true);
     setMessage(null);
     try {
-      const { results } = await inviteStudents({ schoolId, studentIds: [studentId] });
+      const { results } = await inviteStudents({ schoolId, studentIds: [studentId], welcome: true });
       const outcome = results[0]?.outcome ?? 'notFound';
-      setMessage({ ok: outcome === 'invited' || outcome === 'already', text: MESSAGE[outcome] });
+      const text =
+        outcome === 'invited' ? (results[0]?.welcomed ? 'Done. We emailed them how to sign in.' : `${MESSAGE.invited} The welcome email could not be sent: tell them to sign in at the student site.`) : MESSAGE[outcome];
+      setMessage({ ok: outcome === 'invited' || outcome === 'already', text });
     } catch (err) {
       setMessage({ ok: false, text: (err as Error).message });
     } finally {
@@ -56,7 +58,7 @@ export function PortalAccess({ studentId, hasLogin, hasEmail }: { studentId: str
       <p className="muted">
         {hasLogin
           ? `Can sign in${learnHost ? ` at ${learnHost}` : ''} to book, cancel and see their lessons and invoices.`
-          : 'No portal login yet. Giving access sends no email; tell the student to sign in with this email.'}
+          : 'No portal login yet. Giving access emails the student how to sign in.'}
       </p>
       {message && <p className={message.ok ? 'success' : 'error'}>{message.text}</p>}
     </div>
