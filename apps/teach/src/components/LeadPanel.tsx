@@ -5,15 +5,17 @@ import { useState } from 'react';
 import { formatDateTime, LEAD_STAGE_LABEL } from '@lessonkaki/shared';
 import { db } from '../firebase';
 import { useQuery, useTimeZone } from '../hooks';
-import { useSchoolId } from '../session';
+import { useSchoolId, useSession } from '../session';
 import type { Lesson, Student } from '../types';
 import { isLessonCancelled } from '../types';
 import { LessonForm } from './LessonForm';
+import { inviteStudents, MESSAGE } from './PortalAccess';
 import { useLessonHref } from './LessonSheet';
 import { Link } from 'react-router';
 
 export function LeadPanel({ studentId, student }: { studentId: string; student: Student }) {
   const schoolId = useSchoolId();
+  const { role } = useSession();
   const tz = useTimeZone();
   const lessonHref = useLessonHref();
   const lead = student.lead ?? { stage: 'new' as const };
@@ -42,8 +44,18 @@ export function LeadPanel({ studentId, student }: { studentId: string; student: 
     }
   }
 
-  const makeStudent = () =>
-    save({ status: 'active', 'lead.stage': 'won', 'lead.followUpOn': null, 'lead.closedAt': serverTimestamp() });
+  // A new student also gets their portal login (owner only); otherwise they cannot sign in to book.
+  const makeStudent = async () => {
+    if (!(await save({ status: 'active', 'lead.stage': 'won', 'lead.followUpOn': null, 'lead.closedAt': serverTimestamp() }))) return;
+    if (role !== 'owner') return setError('Now a student, but they have no portal login yet: ask the owner to give portal access.');
+    try {
+      const { results } = await inviteStudents({ schoolId, studentIds: [studentId] });
+      const outcome = results[0]?.outcome ?? 'notFound';
+      if (outcome !== 'invited' && outcome !== 'already') setError(`Now a student, but no portal login yet. ${MESSAGE[outcome]}`);
+    } catch (err) {
+      setError(`Now a student, but the portal login failed: ${(err as Error).message}`);
+    }
+  };
   const markLost = async () => {
     if (await save({ 'lead.stage': 'lost', 'lead.lostReason': reason.trim() || null, 'lead.followUpOn': null, 'lead.closedAt': serverTimestamp() })) {
       setLosing(false);

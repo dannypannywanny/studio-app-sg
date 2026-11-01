@@ -5,11 +5,11 @@ import { call } from '../firebase';
 import { useSchool } from '../hooks';
 import { useSchoolId, useSession } from '../session';
 
-type Outcome = 'invited' | 'already' | 'notFound' | 'archived' | 'lead' | 'noEmail' | 'sharedEmail' | 'staffAccount' | 'linkedElsewhere';
+export type Outcome = 'invited' | 'already' | 'notFound' | 'archived' | 'lead' | 'noEmail' | 'sharedEmail' | 'staffAccount' | 'linkedElsewhere';
 
-const inviteStudents = call<{ schoolId: string; studentIds: string[] }, { results: { studentId: string; outcome: Outcome }[] }>('inviteStudents');
+export const inviteStudents = call<{ schoolId: string; studentIds: string[] }, { results: { studentId: string; outcome: Outcome }[] }>('inviteStudents');
 
-const MESSAGE: Record<Outcome, string> = {
+export const MESSAGE: Record<Outcome, string> = {
   invited: 'Done. They can sign in now with this email.',
   already: 'They already have access.',
   notFound: 'Student not found.',
