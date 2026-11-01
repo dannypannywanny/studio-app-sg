@@ -168,7 +168,9 @@ export async function sellPackage(
       totalCents: priceCents,
       paidCents: 0,
       pendingCents: priceCents,
-      status: 'sent',
+      // Nothing to collect (100% discount / free package): settled from the start, no payment to record.
+      status: priceCents === 0 ? 'paid' : 'sent',
+      ...(priceCents === 0 ? { paidAt: nowTs } : {}),
       overdueSince: null,
       issueDate: nowTs,
       dueDate: Timestamp.fromDate(new Date(at.getTime() + 7 * DAY_MS)),
