@@ -1,4 +1,4 @@
-// Buying a package online with HitPay (whatever methods the school enabled there), before booking.
+// Buying a package (or event tickets, see events.ts) online with HitPay (whatever methods the school enabled there), before booking.
 //
 // startCheckout makes a checkouts/{id} doc and a HitPay payment request for the package price, and
 // returns HitPay's checkout URL. HitPay sends the student back to the learn site, and separately
@@ -11,6 +11,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Timestamp, type Firestore } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
 import { sellPackage } from './credits';
+import { completeEventCheckout, type EventMail } from './events';
 import { notFound, now, schoolRef, type Actor } from './db';
 import { recordPayment } from './money';
 
@@ -166,6 +167,8 @@ export async function handleHitPayWebhook(
   rawBody: Buffer,
   signature: string | undefined,
   at: Date = new Date(),
+  /** Sends event ticket confirmations; null = none (tests, no mail key). */
+  mail: EventMail | null = null,
 ): Promise<WebhookOutcome> {
   let payload: WebhookPayload;
   try {
@@ -210,6 +213,10 @@ export async function handleHitPayWebhook(
   const system: Actor = { uid: 'hitpay', role: 'system' };
   const requestId = payload.id ?? checkoutId;
   const paymentId = payload.payments?.find((p) => p.status === 'succeeded' || p.status === 'completed')?.id ?? requestId;
+  if (snap.get('kind') === 'event') {
+    await completeEventCheckout(db, schoolId, checkoutId, { requestId, paymentId }, mail, at);
+    return 'paid';
+  }
   const sale = await sellPackage(
     db,
     { schoolId, studentId: snap.get('studentId') as string, packageId: snap.get('packageId') as string, idempotencyKey: `checkout-${checkoutId}`, paidOnline: true },

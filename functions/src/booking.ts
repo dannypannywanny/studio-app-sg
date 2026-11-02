@@ -1,7 +1,7 @@
 // Student self-booking (learn site): open slots from teacher hours, and booking one of them.
 //
 // A teacher is busy during any scheduled lesson that still has someone on it (booked, present or
-// absent). A lesson whose only student cancelled frees the slot again. Group lessons: a lesson of the
+// absent), and during any event they host (events.ts). A lesson whose only student cancelled frees the slot again. Group lessons: a lesson of the
 // booked subject with places left (subjects.capacity > 1) stays bookable at its own start and length, and
 // booking it adds the student to that lesson; any other time overlapping it is still taken. Nothing is charged at booking:
 // the lesson is an ordinary one-on-one and credits move when attendance is marked (policy debitOn
@@ -24,6 +24,7 @@ import {
 import { enqueueAlert } from './alerts';
 import { lessonStateOf, newAttendeeDoc } from './attendance';
 import { audit, notFound, now, readAll, schoolRef, type Actor } from './db';
+import { eventsHeld } from './events';
 import { MAX_DURATION_MIN, checkRefs, teacherWindow, writeLesson } from './lessons';
 
 /** Attendee statuses that keep the teacher's time taken. */
@@ -125,7 +126,11 @@ export async function teacherHeld(
   const lessons = (await read.query(teacherWindow(school, teacherId, fromMs, toMs))).docs.filter(
     (d) => d.get('status') !== 'cancelled' && endMs(d) > fromMs,
   );
-  if (!lessons.length) return [];
+  // Events the teacher hosts take their time like a full lesson (never joinable).
+  const events = (await eventsHeld(read, school, teacherId, fromMs, toMs)).map(
+    (e): HeldLesson => ({ lessonId: `event:${e.eventId}`, startMs: e.startMs, endMs: e.endMs, subjectId: '', isOnline: false, locationId: null, capacity: 1, taken: Number.MAX_SAFE_INTEGER, statuses: [] }),
+  );
+  if (!lessons.length) return events;
   // One collection-group read for every attendee in the window, instead of one read per lesson.
   const attendees = await read.query(
     school.firestore
@@ -139,7 +144,7 @@ export async function teacherHeld(
     const lessonId = a.ref.parent.parent!.id;
     statuses.set(lessonId, [...(statuses.get(lessonId) ?? []), a.get('status') as AttendanceStatus]);
   }
-  return lessons
+  const held = lessons
     .filter((d) => {
       const list = statuses.get(d.id);
       // No attendee docs found (shouldn't happen): keep it busy rather than double-book.
@@ -161,6 +166,7 @@ export async function teacherHeld(
         statuses: list,
       };
     });
+  return [...held, ...events];
 }
 
 interface OwnLesson {

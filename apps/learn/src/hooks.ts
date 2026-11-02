@@ -15,16 +15,18 @@ interface Live<T> {
 
 /** Live document. `path` null = nothing to load. */
 export function useDoc<T = DocumentData>(path: string | null): Live<WithId<T> | null> {
-  const [state, setState] = useState<Live<WithId<T> | null>>({ data: null, loading: !!path, error: null });
+  const [state, setState] = useState<Live<WithId<T> | null> & { path: string | null }>({ data: null, loading: !!path, error: null, path });
   useEffect(() => {
-    if (!path) return setState({ data: null, loading: false, error: null });
+    if (!path) return setState({ data: null, loading: false, error: null, path });
     setState((s) => ({ ...s, loading: true }));
     return onSnapshot(
       doc(db, path),
-      (snap) => setState({ data: snap.exists() ? ({ id: snap.id, ...snap.data() } as WithId<T>) : null, loading: false, error: null }),
-      (error) => setState({ data: null, loading: false, error }),
+      (snap) => setState({ data: snap.exists() ? ({ id: snap.id, ...snap.data() } as WithId<T>) : null, loading: false, error: null, path }),
+      (error) => setState({ data: null, loading: false, error, path }),
     );
   }, [path]);
+  // Right after `path` changes, the old result belongs to the old path: report loading until the new one arrives.
+  if (state.path !== path) return { data: null, loading: !!path, error: null };
   return state;
 }
 

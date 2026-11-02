@@ -353,3 +353,31 @@ button { font: inherit; color: inherit; }
 }
 .hist { flex-wrap: wrap; }
 .hist-note { flex-basis: 100%; margin-top: 6px; padding: 10px 14px; border-radius: 14px; background: var(--surface); color: var(--ink); font-size: 0.93rem; white-space: pre-wrap; }
+
+/* ---------- Events (public) ---------- */
+.page-public { padding-bottom: 96px; }
+.ev-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.ev-card {
+  display: grid; gap: 6px; padding: 22px 24px; border-radius: var(--r-card); background: var(--raised);
+  box-shadow: 0 1px 0 var(--line); text-decoration: none; color: inherit; transition: transform 0.25s var(--ease), box-shadow 0.25s var(--ease);
+}
+.ev-card:hover { transform: translateY(-2px); box-shadow: 0 1px 0 var(--line), 0 10px 24px -16px rgb(22 22 22 / 0.35); }
+.ev-card-when { color: var(--ink-2); font-size: 0.92rem; font-weight: 550; }
+.ev-card-title { font-family: var(--font-display); font-weight: 600; font-size: 1.5rem; letter-spacing: -0.02em; line-height: 1.15; }
+.ev-card-tag { color: var(--ink-2); }
+.ev-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-top: 10px; }
+.ev-card-foot .buy-price { font-size: 1.6rem; }
+.ev-card-foot .text-link { display: inline-flex; align-items: center; gap: 6px; }
+.ev-head h1 { font-size: clamp(2rem, 6vw, 3.1rem); }
+.ev-kicker { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); font-weight: 550; font-size: 0.92rem; }
+.ev-kicker svg { color: var(--tan-deep); }
+.ev-facts { margin-top: 18px; }
+.ev-facts li { color: var(--ink); }
+.ev-price { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
+.ev-was { color: var(--ink-2); font-size: 0.95rem; }
+.ev-was s { text-decoration-thickness: 1.5px; }
+.ev-body { display: grid; gap: 28px; margin-top: 32px; }
+.ev-about { max-width: 62ch; }
+.ev-about > * + * { margin-top: 14px; }
+.ev-about p { color: var(--ink); line-height: 1.65; }
+.ev-body .buy-card h2 { font-size: 1.35rem; }

@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-route
 import { Layout } from './Layout';
 import { Calendar } from './pages/Calendar';
 import { Dashboard } from './pages/Dashboard';
+import { Events } from './pages/Events';
 import { ImportStudents } from './pages/ImportStudents';
 import { Leads } from './pages/Leads';
 import { Packages } from './pages/Packages';
@@ -74,6 +75,8 @@ export function App() {
             <Route path="invoices" element={<Invoices />} />
             <Route path="invoices/:invoiceId" element={<InvoiceDetail />} />
             <Route path="packages" element={<Packages />} />
+            <Route path="events" element={<Events />} />
+            <Route path="events/:eventId" element={<Events />} />
             <Route path="reports" element={<Reports />} />
             <Route path="staff" element={<Staff />} />
             <Route path="settings" element={<Settings />} />

@@ -5,6 +5,7 @@ import { auth } from './firebase';
 import { useProfile, useSiteSchoolId } from './hooks';
 import { Book } from './pages/Book';
 import { Buy } from './pages/Buy';
+import { EventList, EventPage } from './pages/Events';
 import { FinishSignIn } from './pages/FinishSignIn';
 import { Home } from './pages/Home';
 import { InvoiceDetail } from './pages/InvoiceDetail';
@@ -59,6 +60,9 @@ export function App() {
         <Routes>
           <Route path="/sign-in" element={<SignIn />} />
           <Route path="/finish-signin" element={<FinishSignIn />} />
+          {/* Public: anyone can buy event tickets, signed in or not. */}
+          <Route path="/events" element={<EventList />} />
+          <Route path="/events/:eventId" element={<EventPage />} />
           <Route
             element={
               <RequireStudent>

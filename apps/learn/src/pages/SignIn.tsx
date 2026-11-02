@@ -21,7 +21,7 @@ const sendSignInLink = call<{ email: string }, { ok: true }>('sendSignInLink');
 const signUpStudent = call<{ firstName: string; lastName: string; email: string; phone: string; consent: true }, { existing: boolean }>('signUpStudent');
 
 /** Country codes for the mobile field: Singapore first, then the region, then common others. */
-const DIAL_CODES = [
+export const DIAL_CODES = [
   ['+65', 'Singapore'], ['+60', 'Malaysia'], ['+62', 'Indonesia'], ['+63', 'Philippines'], ['+66', 'Thailand'], ['+84', 'Vietnam'],
   ['+86', 'China'], ['+852', 'Hong Kong'], ['+853', 'Macau'], ['+886', 'Taiwan'], ['+81', 'Japan'], ['+82', 'South Korea'],
   ['+91', 'India'], ['+61', 'Australia'], ['+64', 'New Zealand'], ['+44', 'United Kingdom'], ['+1', 'US / Canada'],

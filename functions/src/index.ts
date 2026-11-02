@@ -16,6 +16,7 @@ import { requireRole } from './auth';
 import * as attendance from './attendance';
 import * as booking from './booking';
 import * as checkout from './checkout';
+import * as events from './events';
 import * as holidays from './holidays';
 import * as reminders from './reminders';
 import * as teachers from './teachers';
@@ -476,19 +477,60 @@ export const startCheckout = onCall({ secrets: [HITPAY_KEYS] }, async (req) => {
 });
 
 /** HitPay calls this (registered in the HitPay dashboard for payment_request.completed). */
-export const hitpayWebhook = onRequest({ secrets: [HITPAY_KEYS] }, async (req, res) => {
+export const hitpayWebhook = onRequest({ secrets: [HITPAY_KEYS, RESEND_API_KEY] }, async (req, res) => {
   if (req.method !== 'POST') {
     res.status(405).send('POST only');
     return;
   }
   try {
-    const outcome = await checkout.handleHitPayWebhook(db(), checkout.parseKeyRing(HITPAY_KEYS.value()), req.rawBody, req.get('Hitpay-Signature'));
+    const key = RESEND_API_KEY.value();
+    const mail = { sender: key ? alerts.resendSender(key) : null, defaultFrom: DEFAULT_ALERT_FROM };
+    const outcome = await checkout.handleHitPayWebhook(db(), checkout.parseKeyRing(HITPAY_KEYS.value()), req.rawBody, req.get('Hitpay-Signature'), new Date(), mail);
     console.log(`hitpayWebhook: ${outcome}`);
     res.status(outcome === 'badSignature' ? 401 : 200).send(outcome);
   } catch (err) {
     console.error('hitpayWebhook failed', err);
     res.status(500).send('error'); // HitPay retries
   }
+});
+
+// Event tickets (learn site /events): anyone can buy, no account. See events.ts.
+const StartEventCheckout = z.object({
+  eventId: id,
+  qty: z.number().int().min(1).max(20),
+  firstName: z.string().trim().min(1).max(80),
+  lastName: z.string().trim().max(80),
+  email: z.email().max(200),
+  phone: z.string().trim().min(6).max(30),
+  consent: z.literal(true),
+  marketing: z.boolean(),
+});
+
+export const startEventCheckout = onCall({ secrets: [HITPAY_KEYS] }, async (req) => {
+  const input = parse(StartEventCheckout, req.data);
+  const origin = req.rawRequest.headers.origin;
+  if (!origin) throw new HttpsError('invalid-argument', 'Open the event page in a browser');
+  const host = new URL(origin).hostname;
+  const site = await db().collection('publicSchools').doc(host).get();
+  const keys = site.exists ? checkout.parseKeyRing(HITPAY_KEYS.value())[site.get('schoolId') as string] : undefined;
+  return events.startEventCheckout(db(), keys ? checkout.hitpayClient(keys) : null, { ...input, host });
+});
+
+export const eventOrderStatus = onCall(async (req) => {
+  const input = parse(z.object({ eventId: id, orderId: id }), req.data);
+  const origin = req.rawRequest.headers.origin;
+  if (!origin) throw new HttpsError('invalid-argument', 'Open the event page in a browser');
+  return events.eventOrderStatus(db(), { ...input, host: new URL(origin).hostname });
+});
+
+/** Staff: email a ticket holder their confirmation again (e.g. once the venue is set). */
+export const resendEventConfirmation = onCall({ secrets: [RESEND_API_KEY] }, async (req) => {
+  const input = parse(z.object({ schoolId: id, checkoutId: id }), req.data);
+  requireRole(req.auth, input.schoolId, ['owner', 'admin']);
+  const key = RESEND_API_KEY.value();
+  if (!key) throw new HttpsError('failed-precondition', 'Email is not set up');
+  await events.sendEventConfirmation(db(), input.schoolId, input.checkoutId, alerts.resendSender(key), DEFAULT_ALERT_FROM, true);
+  return { ok: true };
 });
 
 const SignUp = z.object({

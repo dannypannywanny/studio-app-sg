@@ -13,3 +13,4 @@ export * from './availability';
 export * from './holidays';
 export * from './reminders';
 export * from './tax';
+export * from './events';

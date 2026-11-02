@@ -114,10 +114,22 @@ service cloud.firestore {
       }
 
       match /bookings/{id} { allow read: if isStaff(s); allow write: if false; }
-      // Online package purchases (HitPay): the buyer watches their own checkout turn 'paid'.
+      // Online package purchases and event tickets (HitPay): the buyer watches their own checkout turn
+      // 'paid'. Staff tick ticket holders in at the door (checkedInAt only); everything else is server-side.
       match /checkouts/{id} {
         allow read: if isStaff(s) || resource.data.studentId == myStudent(s);
-        allow write: if false;
+        allow update: if isStaff(s) && resource.data.kind == 'event'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['checkedInAt', 'updatedAt']);
+        allow create, delete: if false;
+      }
+
+      // Events sold as tickets on the learn site: anyone may read a published one (signed out too).
+      // soldQty is kept by the payment webhook only.
+      match /events/{id} {
+        allow read: if resource.data.published == true || isStaff(s);
+        allow create: if isStaff(s) && !('soldQty' in request.resource.data);
+        allow update: if isStaff(s) && untouched(['soldQty']);
+        allow delete: if isStaff(s) && resource.data.get('soldQty', 0) == 0;
       }
       match /slotLocks/{id} { allow read, write: if false; }
       match /counters/{id} { allow read, write: if false; }

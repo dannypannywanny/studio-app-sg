@@ -213,6 +213,29 @@ describe('student scoping', () => {
   });
 });
 
+describe('events', () => {
+  it('anyone reads published events; staff edit them but never the sold count; staff tick ticket holders in', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), `schools/${A}/events/live`), { title: 'Live', published: true, soldQty: 2 });
+      await setDoc(doc(ctx.firestore(), `schools/${A}/events/draft`), { title: 'Draft', published: false });
+      await setDoc(doc(ctx.firestore(), `schools/${A}/checkouts/t1`), { kind: 'event', eventId: 'live', status: 'paid' });
+    });
+    await assertSucceeds(getDoc(doc(anon(), `schools/${A}/events/live`)));
+    await assertSucceeds(getDocs(query(collection(anon(), `schools/${A}/events`), where('published', '==', true))));
+    await assertFails(getDoc(doc(anon(), `schools/${A}/events/draft`)));
+    await assertFails(getDocs(collection(anon(), `schools/${A}/events`)));
+    await assertSucceeds(getDoc(doc(admin(), `schools/${A}/events/draft`)));
+    await assertFails(updateDoc(doc(student(), `schools/${A}/events/live`), { title: 'x' }));
+    await assertSucceeds(updateDoc(doc(admin(), `schools/${A}/events/live`), { venue: 'Studio' }));
+    await assertFails(updateDoc(doc(admin(), `schools/${A}/events/live`), { soldQty: 0 }));
+    await assertFails(setDoc(doc(admin(), `schools/${A}/events/new`), { title: 'New', soldQty: 5 }));
+    await assertFails(deleteDoc(doc(admin(), `schools/${A}/events/live`)));
+    await assertSucceeds(updateDoc(doc(admin(), `schools/${A}/checkouts/t1`), { checkedInAt: new Date() }));
+    await assertFails(updateDoc(doc(admin(), `schools/${A}/checkouts/t1`), { status: 'refunded' }));
+    await assertFails(getDoc(doc(anon(), `schools/${A}/checkouts/t1`)));
+  });
+});
+
 describe('storage', () => {
   it('invoice PDFs are never readable or writable by clients (signed URLs only)', async () => {
     await env.withSecurityRulesDisabled(async (ctx) => {
