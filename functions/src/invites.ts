@@ -1,6 +1,6 @@
 // Student portal access. The owner picks students; each one gets an Auth account for their email with
-// student claims (setMemberRole). Nothing is emailed here: students go to the learn site, type their
-// email and get Firebase's sign-in link (self sign-up stays disabled, so only invited emails work).
+// student claims (setMemberRole). With `welcome` set, a newly invited student is also emailed how to sign
+// in (the email carries no link or code: they ask for one on the learn site, so nothing goes stale).
 //
 // One Auth account can be one student per school, so an email shared by two students is skipped until
 // the owner gives each their own address. A staff account is never turned into a student.
@@ -9,6 +9,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import type { Claims } from '@lessonkaki/shared';
 import { schoolRef, type Actor } from './db';
 import { setMemberRole } from './members';
+import type { MailSender } from './alerts';
 
 export const MAX_INVITES = 100;
 
@@ -41,6 +42,72 @@ export interface InviteStudentsInput {
 export interface InviteResult {
   studentId: string;
   outcome: InviteOutcome;
+  /** Set when a welcome email was asked for and went out for this newly invited student. */
+  welcomed?: boolean;
+}
+
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
+/** How to sign in, sent when a student first gets portal access. */
+export function welcomeEmail(schoolName: string, firstName: string, learnUrl: string | null) {
+  const where = learnUrl ?? 'the student site';
+  const steps = [
+    `Go to ${where}`,
+    'Type the email address this message was sent to and ask for a sign-in code',
+    'Open the email we send you (check spam or promotions if it is not there) and type the 6-digit code, or tap the link in it',
+  ];
+  const subject = `Welcome to ${schoolName}: how to sign in and book your lessons`;
+  const text = [
+    `Hi ${firstName},`,
+    '',
+    `You can now book and manage your lessons online with ${schoolName}. To sign in:`,
+    '',
+    ...steps.map((t, i) => `${i + 1}. ${t}`),
+    '',
+    'There is no password. Next time, repeat the same steps. Once in, you can see your lessons and sessions left, book, cancel, buy packages and see invoices.',
+    '',
+    'If you need a hand, just reply to the studio.',
+    '',
+    schoolName,
+  ].join('\n');
+  const name = escapeHtml(schoolName);
+  const button = learnUrl
+    ? `<p style="margin:0 0 24px"><a href="${escapeHtml(learnUrl)}" style="display:inline-block;background:#c9ad92;color:#161616;text-decoration:none;font-weight:600;padding:14px 24px;border-radius:999px">Go to sign in</a></p>`
+    : '';
+  const html = `<!doctype html><html><body style="margin:0;padding:24px;background:#f4f4f2;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#161616">
+<div style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:16px;padding:32px">
+<p style="margin:0 0 16px;font-size:20px;font-weight:600">${name}</p>
+<p style="margin:0 0 16px;font-size:16px;line-height:1.5">Hi ${escapeHtml(firstName)}, you can now book and manage your lessons online. To sign in:</p>
+<ol style="margin:0 0 24px;padding-left:20px;font-size:16px;line-height:1.6">${steps.map((t) => `<li>${escapeHtml(t)}</li>`).join('')}</ol>
+${button}<p style="margin:0;font-size:13px;line-height:1.5;color:#55555a">There is no password: next time, repeat the same steps. If you need a hand, just reply to the studio.</p>
+</div></body></html>`;
+  return { subject, text, html };
+}
+
+export interface WelcomeMail {
+  sender: MailSender;
+  defaultFrom: string;
+}
+
+/** Best effort: a mail problem never undoes the invite. */
+async function sendWelcome(db: Firestore, mail: WelcomeMail, schoolId: string, studentId: string): Promise<boolean> {
+  try {
+    const school = schoolRef(db, schoolId);
+    const [schoolSnap, student] = await Promise.all([school.get(), school.collection('students').doc(studentId).get()]);
+    const email = String(student.get('email') ?? '').trim().toLowerCase();
+    const host = schoolSnap.get('hosts.learn') as string | null | undefined;
+    const content = welcomeEmail(
+      (schoolSnap.get('name') as string | undefined) ?? 'Student portal',
+      String(student.get('preferredName') || student.get('firstName') || 'there'),
+      host ? `https://${host}` : null,
+    );
+    const from = (schoolSnap.get('mail.from') as string | undefined) || mail.defaultFrom;
+    await mail.sender.send({ from, to: [email], ...content, idempotencyKey: `welcome/${schoolId}/${studentId}` });
+    return true;
+  } catch (err) {
+    console.warn(`welcome email for ${studentId} failed`, err);
+    return false;
+  }
 }
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -92,13 +159,23 @@ async function decide(
   return { outcome: 'invited', email };
 }
 
-export async function inviteStudents(db: Firestore, auth: Auth, input: InviteStudentsInput, actor: Actor): Promise<InviteResult[]> {
+export async function inviteStudents(
+  db: Firestore,
+  auth: Auth,
+  input: InviteStudentsInput,
+  actor: Actor,
+  welcome?: WelcomeMail | null,
+): Promise<InviteResult[]> {
   const owners = await emailOwners(db, input.schoolId);
   const results: InviteResult[] = [];
   for (const studentId of [...new Set(input.studentIds)]) {
     const { outcome, email } = await decide(db, auth, input.schoolId, studentId, owners);
     if (outcome === 'invited' && !input.dryRun) {
       await setMemberRole(db, auth, { schoolId: input.schoolId, email, role: 'student', studentId }, actor);
+      if (welcome) {
+        results.push({ studentId, outcome, welcomed: await sendWelcome(db, welcome, input.schoolId, studentId) });
+        continue;
+      }
     }
     results.push({ studentId, outcome });
   }

@@ -77,3 +77,35 @@ describe('inviteStudents', () => {
     expect(await outcomes(t, ['nobody', 'blank', 'junk'])).toEqual({ nobody: 'notFound', blank: 'noEmail', junk: 'noEmail' });
   });
 });
+
+describe('inviteStudents welcome email', () => {
+  const mailer = () => {
+    const sent: { to: string[]; subject: string; text: string }[] = [];
+    return { sent, sender: { send: async (m: any) => (sent.push(m), { id: 'x' }) }, defaultFrom: 'Test <t@example.test>' };
+  };
+
+  it('emails how to sign in to a newly invited student, once', async () => {
+    const t = await makeSchool();
+    const email = `welcome-${t.schoolId}@example.test`;
+    await withEmail(t, 'wel', email);
+    await db.doc(`schools/${t.schoolId}`).update({ 'hosts.learn': 'learn.example.test' });
+    const m = mailer();
+    const run = () => inviteStudents(db, auth, { schoolId: t.schoolId, studentIds: ['wel'] }, owner, m);
+    expect(await run()).toEqual([{ studentId: 'wel', outcome: 'invited', welcomed: true }]);
+    expect(m.sent).toHaveLength(1);
+    expect(m.sent[0]!.to).toEqual([email]);
+    expect(m.sent[0]!.text).toContain('https://learn.example.test');
+    // Already has access: no second email.
+    expect(await run()).toEqual([{ studentId: 'wel', outcome: 'already' }]);
+    expect(m.sent).toHaveLength(1);
+  });
+
+  it('still invites when the email fails, and says it was not sent', async () => {
+    const t = await makeSchool();
+    await withEmail(t, 'bad', `bad-${t.schoolId}@example.test`);
+    const sender = { send: async () => { throw new Error('boom'); } };
+    const res = await inviteStudents(db, auth, { schoolId: t.schoolId, studentIds: ['bad'] }, owner, { sender, defaultFrom: 'x' });
+    expect(res).toEqual([{ studentId: 'bad', outcome: 'invited', welcomed: false }]);
+    expect((await auth.getUserByEmail(`bad-${t.schoolId}@example.test`)).customClaims).toMatchObject({ s: { [t.schoolId]: 'bad' } });
+  });
+});

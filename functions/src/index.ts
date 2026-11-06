@@ -133,18 +133,28 @@ export const cancelAttendance = onCall(async (req) => {
   return attendance.cancelAttendance(db(), input, actor);
 });
 
+// Owner email alerts. The Resend key is one platform-wide secret (Secret Manager: RESEND_API_KEY); each
+// school sends from its own verified domain (schools/{id}.mail.from, server-set), else the default below.
+const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
+/** Resend's shared test sender: delivers only to the Resend account's own address. */
+const DEFAULT_ALERT_FROM = 'LessonKaki <onboarding@resend.dev>';
+
 // Student portal (learn site): who can sign in, open slots, and booking one.
 
 const InviteStudents = z.object({
   schoolId: id,
   studentIds: z.array(id).min(1).max(invites.MAX_INVITES),
   dryRun: z.boolean().optional(),
+  /** Email newly invited students how to sign in. */
+  welcome: z.boolean().optional(),
 });
 
-export const inviteStudents = onCall(async (req) => {
-  const input = parse(InviteStudents, req.data);
+export const inviteStudents = onCall({ secrets: [RESEND_API_KEY] }, async (req) => {
+  const { welcome, ...input } = parse(InviteStudents, req.data);
   const actor = requireRole(req.auth, input.schoolId, ['owner']);
-  return { results: await invites.inviteStudents(db(), getAuth(), input, actor) };
+  const key = RESEND_API_KEY.value();
+  const mail = welcome && key && !input.dryRun ? { sender: alerts.resendSender(key), defaultFrom: DEFAULT_ALERT_FROM } : null;
+  return { results: await invites.inviteStudents(db(), getAuth(), input, actor, mail) };
 });
 
 const GetAvailability = z.object({ schoolId: id, teacherId: id.nullish() });
@@ -427,12 +437,6 @@ export const importStudents = onCall(async (req) => {
   const actor = requireRole(req.auth, input.schoolId, ['owner', 'admin']);
   return importing.importStudents(db(), input as importing.ImportStudentsInput, actor);
 });
-
-// Owner email alerts. The Resend key is one platform-wide secret (Secret Manager: RESEND_API_KEY); each
-// school sends from its own verified domain (schools/{id}.mail.from, server-set), else the default below.
-const RESEND_API_KEY = defineSecret('RESEND_API_KEY');
-/** Resend's shared test sender: delivers only to the Resend account's own address. */
-const DEFAULT_ALERT_FROM = 'LessonKaki <onboarding@resend.dev>';
 
 /** Sends each alert written by the functions above. Retries on transient errors (see alerts.ts). */
 export const onAlertCreated = onDocumentCreated(

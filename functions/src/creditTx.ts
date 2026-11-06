@@ -67,6 +67,8 @@ export function pickLot(lots: LotState[], atMs: number, preferredId: string | nu
 export class CreditTx {
   private readonly lots = new Map<string, LotState>();
   private readonly summaries = new Map<string, SummaryDelta>();
+  /** Owed attendees already settled in this transaction (the snapshots in `owed` don't change). */
+  private readonly settledOwed = new Set<string>();
 
   constructor(
     readonly tx: Transaction,
@@ -277,7 +279,7 @@ export class CreditTx {
     let settled = 0;
     for (const att of owed) {
       if (lot.remaining === 0) break;
-      if (att.get('owed') !== true) continue;
+      if (att.get('owed') !== true || this.settledOwed.has(att.ref.path)) continue;
       if ((att.get('lessonStartAt') as Timestamp).toMillis() > lot.validUntilMs) continue;
       const lessonId = att.get('lessonId') as string;
       const entryId = this.ledger({
@@ -291,6 +293,7 @@ export class CreditTx {
         invoiceId,
         idempotencyKey: `${keyPrefix}:settle:${lessonId}`,
       });
+      this.settledOwed.add(att.ref.path);
       lot.remaining -= 1;
       lot.used += 1;
       if (lot.remaining === 0) lot.status = 'completed';
