@@ -3,10 +3,10 @@
 import { addDoc, collection, doc, query, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { useState, type FormEvent } from 'react';
 import { centsToDecimal, formatMoney, parseMoney } from '@lessonkaki/shared';
-import { db } from '../firebase';
+import { call, db } from '../firebase';
 import { useQuery } from '../hooks';
 import { useSchoolId } from '../session';
-import type { Package, Subject } from '../types';
+import type { DiscountCode, Package, Subject } from '../types';
 
 type Kind = 'paid' | 'trial' | 'single';
 const KIND_LABEL: Record<Kind, string> = { paid: 'Package', trial: 'Trial', single: 'Single lesson' };
@@ -110,6 +110,199 @@ function PackageForm({ initial, subjects, onDone }: { initial: Row | null; subje
   );
 }
 
+const saveDiscountCode = call<
+  {
+    schoolId: string;
+    code: string;
+    kind: 'percent' | 'amount';
+    value: number;
+    packageIds: string[];
+    validUntil: string | null;
+    maxUses: number | null;
+    active: boolean;
+  },
+  { code: string }
+>('saveDiscountCode');
+
+const describeOff = (c: DiscountCode) => (c.kind === 'percent' ? `${c.value}% off` : `${formatMoney(c.value)} off`);
+
+function DiscountCodeForm({ initial, packages, onDone }: { initial: (DiscountCode & { id: string }) | null; packages: Row[]; onDone: () => void }) {
+  const schoolId = useSchoolId();
+  const [code, setCode] = useState(initial?.id ?? '');
+  const [kind, setKind] = useState<'percent' | 'amount'>(initial?.kind ?? 'percent');
+  const [value, setValue] = useState(initial ? (initial.kind === 'percent' ? String(initial.value) : centsToDecimal(initial.value)) : '');
+  const [packageIds, setPackageIds] = useState<string[]>(initial?.packageIds ?? []);
+  const [validUntil, setValidUntil] = useState(initial?.validUntil ?? '');
+  const [maxUses, setMaxUses] = useState(initial?.maxUses ? String(initial.maxUses) : '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    const amount = kind === 'percent' ? Number(value) : parseMoney(value);
+    if (amount === null || !Number.isFinite(amount) || amount <= 0) return setError(kind === 'percent' ? 'Enter a percentage from 1 to 100.' : 'Enter an amount like 50 or 49.90.');
+    const uses = maxUses.trim() ? Number(maxUses) : null;
+    if (uses !== null && (!Number.isInteger(uses) || uses < 1)) return setError('Uses must be a whole number, or blank for no limit.');
+    setBusy(true);
+    setError(null);
+    try {
+      await saveDiscountCode({
+        schoolId,
+        code,
+        kind,
+        value: amount,
+        packageIds,
+        validUntil: validUntil || null,
+        maxUses: uses,
+        active: initial?.active ?? true,
+      });
+      onDone();
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="card form-grid" onSubmit={submit}>
+      <label className="field">
+        <span>Code</span>
+        <input required maxLength={40} value={code} disabled={!!initial} onChange={(e) => setCode(e.target.value)} placeholder="e.g. 1010promo" autoCapitalize="characters" />
+      </label>
+      <div className="field">
+        <span>Discount</span>
+        <div className="row discount-row">
+          <select value={kind} onChange={(e) => setKind(e.target.value as 'percent' | 'amount')} aria-label="Discount type">
+            <option value="percent">%</option>
+            <option value="amount">Amount</option>
+          </select>
+          <input required inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} aria-label="Discount value" />
+        </div>
+      </div>
+      <fieldset className="field span-all">
+        <legend>Valid for (none ticked = every package)</legend>
+        {packages
+          .filter((p) => p.active !== false)
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((p) => (
+            <label key={p.id} className="row">
+              <input
+                type="checkbox"
+                checked={packageIds.includes(p.id)}
+                onChange={(e) => setPackageIds(e.target.checked ? [...packageIds, p.id] : packageIds.filter((x) => x !== p.id))}
+              />
+              <span>
+                {p.name} · {formatMoney(p.priceCents)}
+              </span>
+            </label>
+          ))}
+      </fieldset>
+      <label className="field">
+        <span>Last day (blank = no end)</span>
+        <input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
+      </label>
+      <label className="field">
+        <span>Times it can be used (blank = unlimited)</span>
+        <input inputMode="numeric" value={maxUses} onChange={(e) => setMaxUses(e.target.value)} />
+      </label>
+      <div className="form-actions">
+        <button className="btn btn-primary" disabled={busy}>
+          {busy ? 'Saving…' : initial ? 'Save code' : 'Add code'}
+        </button>
+        <button type="button" className="btn btn-ghost" onClick={onDone}>
+          Cancel
+        </button>
+        {error && <p className="error">{error}</p>}
+      </div>
+    </form>
+  );
+}
+
+function DiscountCodes({ packages }: { packages: Row[] }) {
+  const schoolId = useSchoolId();
+  const codes = useQuery<DiscountCode>(`discountCodes:${schoolId}`, () => query(collection(db, 'schools', schoolId, 'discountCodes')));
+  const [editing, setEditing] = useState<(DiscountCode & { id: string }) | 'new' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const packageName = new Map(packages.map((p) => [p.id, p.name]));
+  const rows = [...codes.data].sort((a, b) => Number(b.active !== false) - Number(a.active !== false) || a.id.localeCompare(b.id));
+
+  async function toggle(c: DiscountCode & { id: string }) {
+    setError(null);
+    try {
+      await saveDiscountCode({
+        schoolId,
+        code: c.id,
+        kind: c.kind,
+        value: c.value,
+        packageIds: c.packageIds ?? [],
+        validUntil: c.validUntil ?? null,
+        maxUses: c.maxUses ?? null,
+        active: c.active === false,
+      });
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  return (
+    <section className="stack">
+      <div className="page-head">
+        <h2>Discount codes</h2>
+        {!editing && (
+          <button className="btn" onClick={() => setEditing('new')}>
+            New code
+          </button>
+        )}
+      </div>
+      <p className="muted">Students type a code on the buy page; you can also pick one when selling a package from a student's page.</p>
+      {editing && (
+        <DiscountCodeForm key={editing === 'new' ? 'new' : editing.id} initial={editing === 'new' ? null : editing} packages={packages} onDone={() => setEditing(null)} />
+      )}
+      {(codes.error || error) && <p className="error">{(codes.error ?? { message: error }).message}</p>}
+      {rows.length === 0 ? (
+        <p className="empty">No discount codes yet.</p>
+      ) : (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Discount</th>
+              <th>Packages</th>
+              <th>Last day</th>
+              <th className="num">Used</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((c) => (
+              <tr key={c.id} className={c.active === false ? 'cancelled' : ''}>
+                <td>{c.id}</td>
+                <td>{describeOff(c)}</td>
+                <td>{c.packageIds?.length ? c.packageIds.map((id) => packageName.get(id) ?? id).join(', ') : 'All packages'}</td>
+                <td>{c.validUntil ?? '—'}</td>
+                <td className="num">
+                  {c.usedCount ?? 0}
+                  {c.maxUses ? ` / ${c.maxUses}` : ''}
+                </td>
+                <td>
+                  <div className="row">
+                    <button className="btn btn-sm" onClick={() => setEditing(c)}>
+                      Edit
+                    </button>
+                    <button className="btn btn-sm btn-ghost" onClick={() => void toggle(c)}>
+                      {c.active === false ? 'Turn on' : 'Turn off'}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
 export function Packages() {
   const schoolId = useSchoolId();
   const packages = useQuery<Row>(`allPackages:${schoolId}`, () => query(collection(db, 'schools', schoolId, 'packages')));
@@ -190,6 +383,7 @@ export function Packages() {
           </tbody>
         </table>
       )}
+      <DiscountCodes packages={packages.data} />
     </section>
   );
 }

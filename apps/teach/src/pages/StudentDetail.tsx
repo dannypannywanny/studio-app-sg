@@ -10,7 +10,7 @@ import { PortalAccess } from '../components/PortalAccess';
 import { call, db } from '../firebase';
 import { studentName, useDoc, useFormatTs, useQuery, useSchool, useTeachers, useTimeZone } from '../hooks';
 import { useSchoolId, useSession } from '../session';
-import type { Enrolment, Invoice, LedgerEntry, Package, Student } from '../types';
+import type { DiscountCode, Enrolment, Invoice, LedgerEntry, Package, Student } from '../types';
 
 const LEDGER_LABEL: Record<LedgerType, string> = {
   grant: 'Package sold',
@@ -36,6 +36,7 @@ const sellPackage = call<
     idempotencyKey: string;
     validUntil: string | null;
     discount: { kind: 'percent' | 'amount'; value: number } | null;
+    discountCode: string | null;
     note: string | null;
   },
   SellResult
@@ -72,17 +73,27 @@ function SellPackage({ studentId }: { studentId: string }) {
   const [noExpiry, setNoExpiry] = useState(false);
   const [discountKind, setDiscountKind] = useState<'percent' | 'amount'>('percent');
   const [discount, setDiscount] = useState('');
+  const [codeId, setCodeId] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const codes = useQuery<DiscountCode>(`discountCodes:${schoolId}`, () => query(collection(db, 'schools', schoolId, 'discountCodes')));
   const chosen = packages.data.find((p) => p.id === packageId);
+  // Codes that can be used on this package now; the server checks again when the sale is made.
+  const usableCodes = codes.data.filter(
+    (c) =>
+      c.active !== false &&
+      (!c.packageIds?.length || c.packageIds.includes(packageId)) &&
+      (!c.validUntil || c.validUntil >= today) &&
+      (c.maxUses == null || (c.usedCount ?? 0) < c.maxUses),
+  );
+  const code = usableCodes.find((c) => c.id === codeId);
   const defaultExpiry = chosen?.validityDays ? addDays(today, chosen.validityDays) : null;
   const expiryDate = noExpiry ? null : (expiry ?? defaultExpiry);
   const amount = Number(discount) || 0;
-  const discountCents = !chosen
-    ? 0
-    : Math.min(chosen.priceCents, Math.max(0, discountKind === 'percent' ? Math.round((chosen.priceCents * Math.min(amount, 100)) / 100) : Math.round(amount * 100)));
+  const off = code ? { kind: code.kind, value: code.value } : { kind: discountKind, value: discountKind === 'percent' ? amount : Math.round(amount * 100) };
+  const discountCents = !chosen ? 0 : Math.min(chosen.priceCents, Math.max(0, off.kind === 'percent' ? Math.round((chosen.priceCents * Math.min(off.value, 100)) / 100) : Math.round(off.value)));
   const tax = resolveTax((useSchool().data as { tax?: unknown } | null)?.tax);
   const taxed = applyTax((chosen?.priceCents ?? 0) - discountCents, tax);
   const total = taxed.totalCents;
@@ -105,7 +116,8 @@ function SellPackage({ studentId }: { studentId: string }) {
         packageId: chosen.id,
         idempotencyKey,
         validUntil: expiryDate,
-        discount: discountCents ? { kind: discountKind, value: discountKind === 'percent' ? amount : Math.round(amount * 100) } : null,
+        discount: !code && discountCents ? off : null,
+        discountCode: code?.id ?? null,
         note: note.trim() || null,
       });
       setMessage(
@@ -113,6 +125,7 @@ function SellPackage({ studentId }: { studentId: string }) {
           (res.settled ? `, ${res.settled} owed lesson${res.settled > 1 ? 's' : ''} paid off.` : '.'),
       );
       setPackageId('');
+      setCodeId('');
       setDiscount('');
       setNote('');
       setKey(crypto.randomUUID());
@@ -158,25 +171,40 @@ function SellPackage({ studentId }: { studentId: string }) {
               <input type="checkbox" checked={noExpiry} onChange={(e) => setNoExpiry(e.target.checked)} />
               <span>No expiry</span>
             </label>
-            <div className="field">
-              <span>Discount</span>
-              <div className="row discount-row">
-                <select value={discountKind} onChange={(e) => setDiscountKind(e.target.value as 'percent' | 'amount')} aria-label="Discount type">
-                  <option value="percent">%</option>
-                  <option value="amount">Amount</option>
+            {usableCodes.length > 0 && (
+              <label className="field span-all">
+                <span>Discount code</span>
+                <select value={codeId} onChange={(e) => setCodeId(e.target.value)}>
+                  <option value="">None</option>
+                  {usableCodes.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.id} · {c.kind === 'percent' ? `${c.value}% off` : `${formatMoney(c.value)} off`}
+                    </option>
+                  ))}
                 </select>
-                <input
-                  type="number"
-                  min={0}
-                  max={discountKind === 'percent' ? 100 : chosen.priceCents / 100}
-                  step={discountKind === 'percent' ? 1 : 0.01}
-                  value={discount}
-                  onChange={(e) => setDiscount(e.target.value)}
-                  placeholder="0"
-                  aria-label="Discount"
-                />
+              </label>
+            )}
+            {!code && (
+              <div className="field">
+                <span>Discount</span>
+                <div className="row discount-row">
+                  <select value={discountKind} onChange={(e) => setDiscountKind(e.target.value as 'percent' | 'amount')} aria-label="Discount type">
+                    <option value="percent">%</option>
+                    <option value="amount">Amount</option>
+                  </select>
+                  <input
+                    type="number"
+                    min={0}
+                    max={discountKind === 'percent' ? 100 : chosen.priceCents / 100}
+                    step={discountKind === 'percent' ? 1 : 0.01}
+                    value={discount}
+                    onChange={(e) => setDiscount(e.target.value)}
+                    placeholder="0"
+                    aria-label="Discount"
+                  />
+                </div>
               </div>
-            </div>
+            )}
             <label className="field span-all">
               <span>Notes (staff only; kept on the invoice and the package)</span>
               <textarea value={note} onChange={(e) => setNote(e.target.value)} maxLength={1000} rows={2} />

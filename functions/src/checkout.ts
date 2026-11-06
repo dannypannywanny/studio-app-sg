@@ -13,6 +13,7 @@ import { HttpsError } from 'firebase-functions/v2/https';
 import { sellPackage } from './credits';
 import { completeEventCheckout, type EventMail } from './events';
 import { notFound, now, schoolRef, type Actor } from './db';
+import { previewDiscountCode } from './discountCodes';
 import { recordPayment } from './money';
 
 export interface HitPayKeys {
@@ -86,6 +87,8 @@ export interface StartCheckoutInput {
   packageId: string;
   /** Learn site hostname, where HitPay sends the student back. */
   host: string;
+  /** A discount code the student typed; checked here, counted when the payment completes. */
+  code?: string | null;
 }
 
 export async function startCheckout(
@@ -110,13 +113,21 @@ export async function startCheckout(
   if (!studentSnap!.exists || studentSnap!.get('status') === 'archived') notFound('Student');
   if (!site!.exists || site!.get('schoolId') !== input.schoolId) throw new HttpsError('failed-precondition', 'Unknown site');
 
-  const amountCents = pkgSnap!.get('priceCents') as number;
+  const listCents = pkgSnap!.get('priceCents') as number;
+  // With a code: the price the student sees on the buy page (after the discount and the school's tax).
+  // Without one the amount stays the package price, exactly as before.
+  const quote = input.code?.trim() ? await previewDiscountCode(db, { schoolId: input.schoolId, packageId: input.packageId, code: input.code }) : null;
+  const amountCents = quote ? quote.totalCents : listCents;
+  if (amountCents < 1) throw new HttpsError('failed-precondition', 'This discount makes the package free; ask the studio to add it for you');
   const currency = (schoolSnap!.get('currency') as string | undefined) ?? 'SGD';
   const ref = school.collection('checkouts').doc();
   await ref.create({
     studentId: actor.studentId,
     packageId: input.packageId,
     packageName: pkgSnap!.get('name'),
+    listCents,
+    discountCode: quote?.code ?? null,
+    discount: quote?.discount ?? null,
     amountCents,
     currency,
     status: 'pending',
@@ -219,7 +230,11 @@ export async function handleHitPayWebhook(
   }
   const sale = await sellPackage(
     db,
-    { schoolId, studentId: snap.get('studentId') as string, packageId: snap.get('packageId') as string, idempotencyKey: `checkout-${checkoutId}`, paidOnline: true },
+    { schoolId, studentId: snap.get('studentId') as string, packageId: snap.get('packageId') as string, idempotencyKey: `checkout-${checkoutId}`,
+      paidOnline: true,
+      discount: (snap.get('discount') as { kind: 'percent' | 'amount'; value: number } | null) ?? null,
+      discountCode: (snap.get('discountCode') as string | null) ?? null,
+    },
     system,
     at,
   );
