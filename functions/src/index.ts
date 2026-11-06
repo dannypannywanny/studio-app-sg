@@ -497,6 +497,7 @@ export const hitpayWebhook = onRequest({ secrets: [HITPAY_KEYS, RESEND_API_KEY] 
 // Event tickets (learn site /events): anyone can buy, no account. See events.ts.
 const StartEventCheckout = z.object({
   eventId: id,
+  optionKey: id,
   qty: z.number().int().min(1).max(20),
   firstName: z.string().trim().min(1).max(80),
   lastName: z.string().trim().max(80),

@@ -1,7 +1,8 @@
 // Event tickets (workshops, masterclasses) sold on the learn site to anyone, without an account.
 //
-// Staff create schools/{s}/events/{id} in the teach app (title, time, venue, capacity, price tiers).
-// startEventCheckout takes the buyer's name, email, phone and ticket count, holds the seats for
+// Staff create schools/{s}/events/{id} in the teach app: one page with one or more sessions (title,
+// time, seats) and ticket options (one session, or a cheaper bundle of them), each with price tiers.
+// startEventCheckout takes the buyer's option, name, email, phone and ticket count, holds the seats for
 // EVENT_HOLD_MIN minutes in a checkouts/{id} doc (kind 'event'), and opens a HitPay payment request.
 // When HitPay's webhook reports the payment (checkout.ts), completeEventCheckout links the buyer to a
 // student record (an existing one with that email, else a new lead), raises a paid invoice for the
@@ -18,7 +19,7 @@ import {
   formatMoney,
   resolveTax,
   wallDateOf,
-  type EventPriceTier,
+  type EventOption,
 } from '@lessonkaki/shared';
 import type { MailSender } from './alerts';
 import type { HitPayClient } from './checkout';
@@ -33,8 +34,20 @@ const HOUR_MS = 3_600_000;
 /** Longest event the booking check looks back for. */
 const MAX_EVENT_MS = 24 * HOUR_MS;
 
+/** A session as stored on the event doc. */
+export interface EventSessionDoc {
+  key: string;
+  title: string;
+  summary?: string;
+  startAt: Timestamp;
+  endAt: Timestamp;
+  capacity: number | null;
+}
+
 export interface StartEventCheckoutInput {
   eventId: string;
+  /** Which ticket option (events/{id}.options[].key). */
+  optionKey: string;
   qty: number;
   firstName: string;
   lastName: string;
@@ -48,12 +61,13 @@ export interface StartEventCheckoutInput {
   host: string;
 }
 
-/** Seats taken: paid orders, plus unpaid ones still inside their hold. */
-function seatsTaken(orders: QuerySnapshot, atMs: number): number {
+/** Seats taken in one session: paid orders, plus unpaid ones still inside their hold. */
+function seatsTaken(orders: QuerySnapshot, sessionKey: string, atMs: number): number {
   return orders.docs.reduce((n, d) => {
     const status = d.get('status') as string;
     const hold = (d.get('holdUntil') as Timestamp | undefined)?.toMillis() ?? 0;
-    return status === 'paid' || (status === 'pending' && hold > atMs) ? n + ((d.get('qty') as number) ?? 0) : n;
+    const counts = status === 'paid' || (status === 'pending' && hold > atMs);
+    return counts && ((d.get('sessionKeys') as string[] | undefined) ?? []).includes(sessionKey) ? n + ((d.get('qty') as number) ?? 0) : n;
   }, 0);
 }
 
@@ -84,20 +98,27 @@ export async function startEventCheckout(
     const [schoolSnap, ev, c] = await readAll(tx, school, eventRef, counter);
     if (!ev.exists || ev.get('published') !== true) notFound('Event');
     if (ev.get('status') === 'cancelled') throw new HttpsError('failed-precondition', 'This event has been cancelled');
-    if ((ev.get('startAt') as Timestamp).toMillis() <= at.getTime()) throw new HttpsError('failed-precondition', 'Ticket sales for this event have closed');
     const timeZone = (ev.get('timeZone') as string | undefined) ?? (schoolSnap.get('timezone') as string | undefined) ?? 'Asia/Singapore';
-    const onSale = currentTier((ev.get('prices') as EventPriceTier[] | undefined) ?? [], at, timeZone);
+    const option = ((ev.get('options') as EventOption[] | undefined) ?? []).find((o) => o.key === input.optionKey);
+    if (!option) throw new HttpsError('invalid-argument', 'Pick which ticket you want');
+    const sessions = (ev.get('sessions') as EventSessionDoc[] | undefined) ?? [];
+    const mine = option.sessionKeys.map((k) => sessions.find((x) => x.key === k)).filter((x): x is EventSessionDoc => !!x);
+    if (mine.some((x) => x.startAt.toMillis() <= at.getTime())) throw new HttpsError('failed-precondition', 'Ticket sales for this have closed');
+    const onSale = currentTier(option.prices, at, timeZone);
     if (!onSale) throw new HttpsError('failed-precondition', 'Ticket sales for this event have closed');
     const maxPerOrder = (ev.get('maxPerOrder') as number | undefined) ?? DEFAULT_MAX_PER_ORDER;
     if (!Number.isInteger(input.qty) || input.qty < 1 || input.qty > maxPerOrder) {
       throw new HttpsError('invalid-argument', `You can buy 1 to ${maxPerOrder} tickets at a time`);
     }
-    const capacity = ev.get('capacity');
-    if (typeof capacity === 'number') {
+    const capped = mine.filter((x) => typeof x.capacity === 'number');
+    if (capped.length) {
       const orders = await tx.get(school.collection('checkouts').where('eventId', '==', input.eventId));
-      const left = capacity - seatsTaken(orders, at.getTime());
-      if (left < input.qty) {
-        throw new HttpsError('resource-exhausted', left > 0 ? `Only ${left} ${left === 1 ? 'seat is' : 'seats are'} left` : 'Sorry, this event is sold out');
+      for (const x of capped) {
+        const left = x.capacity! - seatsTaken(orders, x.key, at.getTime());
+        if (left < input.qty) {
+          const what = mine.length > 1 ? ` in ${x.title}` : '';
+          throw new HttpsError('resource-exhausted', left > 0 ? `Only ${left} ${left === 1 ? 'seat is' : 'seats are'} left${what}` : `Sorry, ${x.title} is sold out`);
+        }
       }
     }
     const start = (c.get('windowStart') as Timestamp | undefined)?.toMillis() ?? 0;
@@ -114,6 +135,9 @@ export async function startEventCheckout(
       kind: 'event',
       eventId: input.eventId,
       eventTitle: ev.get('title'),
+      optionKey: option.key,
+      optionLabel: option.label,
+      sessionKeys: option.sessionKeys,
       qty: input.qty,
       tierLabel: onSale.tier.label,
       unitCents: onSale.tier.priceCents,
@@ -131,7 +155,7 @@ export async function startEventCheckout(
       createdAt: now(),
       updatedAt: now(),
     });
-    return { totalCents, currency, title: ev.get('title') as string, schoolName: schoolSnap.get('name') as string };
+    return { totalCents, currency, title: `${ev.get('title') as string} (${option.label})`, schoolName: schoolSnap.get('name') as string };
   });
 
   const req = await client.createPaymentRequest({
@@ -151,14 +175,19 @@ export async function startEventCheckout(
 export async function eventOrderStatus(
   db: Firestore,
   input: { host: string; eventId: string; orderId: string },
-): Promise<{ status: string; qty: number; email: string | null }> {
+): Promise<{ status: string; qty: number; optionLabel: string | null; email: string | null }> {
   const site = await db.collection('publicSchools').doc(input.host).get();
   if (!site.exists) notFound('Order');
   const snap = await schoolRef(db, site.get('schoolId') as string).collection('checkouts').doc(input.orderId).get();
   if (!snap.exists || snap.get('kind') !== 'event' || snap.get('eventId') !== input.eventId) notFound('Order');
   const email = String(snap.get('buyer.email') ?? '');
   // Masked ("da***@gmail.com") so a shared link doesn't give the address away.
-  return { status: snap.get('status') as string, qty: snap.get('qty') as number, email: email ? email.replace(/^(.{0,2})[^@]*/, '$1***') : null };
+  return {
+    status: snap.get('status') as string,
+    qty: snap.get('qty') as number,
+    optionLabel: (snap.get('optionLabel') as string | undefined) ?? null,
+    email: email ? email.replace(/^(.{0,2})[^@]*/, '$1***') : null,
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -246,7 +275,15 @@ export async function completeEventCheckout(
       number: invoiceNumber,
       studentId,
       currency: snap.get('currency') ?? 'SGD',
-      lines: [{ desc: `${title} · ${snap.get('tierLabel')} ticket`, qty, unitCents: snap.get('unitCents'), eventId: snap.get('eventId') }],
+      lines: [
+        {
+          desc: `${title}: ${snap.get('optionLabel')} · ${snap.get('tierLabel')} ticket`,
+          qty,
+          unitCents: snap.get('unitCents'),
+          eventId: snap.get('eventId'),
+          optionKey: snap.get('optionKey'),
+        },
+      ],
       subtotalCents: snap.get('subtotalCents'),
       discountCents: 0,
       taxCents: (snap.get('taxCents') as number | undefined) ?? 0,
@@ -264,7 +301,10 @@ export async function completeEventCheckout(
       createdAt: now(),
       updatedAt: now(),
     });
-    if (ev.exists) tx.update(eventRef, { soldQty: FieldValue.increment(qty), updatedAt: now() });
+    if (ev.exists) {
+      const sold = Object.fromEntries(((snap.get('sessionKeys') as string[] | undefined) ?? []).map((k) => [`soldBySession.${k}`, FieldValue.increment(qty)]));
+      tx.update(eventRef, { ...sold, soldQty: FieldValue.increment(qty), updatedAt: now() });
+    }
     tx.update(ref, { studentId, invoiceId: invoiceRef.id, updatedAt: now() });
     audit(tx, school, system, 'sellEventTickets', `invoices/${invoiceRef.id}`, { eventId: snap.get('eventId'), qty, invoiceNumber });
     return { invoiceId: invoiceRef.id, amountCents: total };
@@ -312,8 +352,8 @@ export interface ConfirmationFacts {
   schoolName: string;
   firstName: string;
   title: string;
-  start: Date;
-  end: Date;
+  /** The sessions this ticket admits to, in time order. */
+  sessions: { title: string; start: Date; end: Date }[];
   timeZone: string;
   venue: string | null;
   qty: number;
@@ -324,17 +364,24 @@ export interface ConfirmationFacts {
 
 export function renderConfirmation(o: ConfirmationFacts): { subject: string; text: string; html: string } {
   const tickets = `${o.qty} ${o.qty === 1 ? 'ticket' : 'tickets'}`;
-  const when = whenLabel(o.start, o.end, o.timeZone);
+  const one = o.sessions.length === 1;
+  // One session: its day and time. Several: the day, then each session's time on its own line.
+  const day = (d: Date) => new Intl.DateTimeFormat('en-SG', { timeZone: o.timeZone, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(d);
+  const when = one ? whenLabel(o.sessions[0]!.start, o.sessions[0]!.end, o.timeZone) : day(o.sessions[0]!.start);
+  const lineup = one ? [] : o.sessions.map((x) => `${x.title}: ${whenLabel(x.start, x.end, o.timeZone).split(', ').slice(-1)[0]}`);
   const where = o.venue ?? 'To be confirmed. We will email you the address before the day.';
   const paid = formatMoney(o.amountCents, o.currency);
-  const cal = calendarLink(o.title, o.start, o.end, o.venue);
-  const subject = `You're in: ${o.title}`;
+  const first = o.sessions[0]!;
+  const last = o.sessions[o.sessions.length - 1]!;
+  const cal = calendarLink(one ? `${o.title}: ${first.title}` : o.title, first.start, last.end, o.venue);
+  const subject = `You're in: ${one ? first.title : o.title}`;
   const text = [
     `Hi ${o.firstName},`,
     '',
-    `Thanks for booking. Here ${o.qty === 1 ? 'is your ticket' : `are your ${tickets}`} for ${o.title}.`,
+    `Thanks for booking. Here ${o.qty === 1 ? 'is your ticket' : `are your ${tickets}`} for ${one ? first.title : o.title}.`,
     '',
     `When: ${when}`,
+    ...lineup.map((l) => `  ${l}`),
     `Where: ${where}`,
     `Paid: ${paid}`,
     '',
@@ -348,8 +395,8 @@ export function renderConfirmation(o: ConfirmationFacts): { subject: string; tex
 <div style="max-width:480px;margin:0 auto;background:#fbfbf9;border-radius:20px;padding:28px">
 <p style="margin:0 0 4px;font-size:13px;color:#55555a">${esc(o.schoolName)}</p>
 <h1 style="margin:0 0 16px;font-size:22px;line-height:1.25">You're in, ${esc(o.firstName)}</h1>
-<p style="margin:0 0 16px;font-size:15px;line-height:1.5">${o.qty === 1 ? 'Your ticket' : `Your ${tickets}`} for <strong>${esc(o.title)}</strong>.</p>
-<table style="font-size:15px;line-height:1.4;border-collapse:collapse;margin:0 0 20px">${row('When', when)}${row('Where', where)}${row('Paid', paid)}</table>
+<p style="margin:0 0 16px;font-size:15px;line-height:1.5">${o.qty === 1 ? 'Your ticket' : `Your ${tickets}`} for <strong>${esc(one ? first.title : o.title)}</strong>${one && first.title !== o.title ? ` at ${esc(o.title)}` : ''}.</p>
+<table style="font-size:15px;line-height:1.4;border-collapse:collapse;margin:0 0 20px">${row('When', when)}${lineup.map((l) => row('', l)).join('')}${row('Where', where)}${row('Paid', paid)}</table>
 <p style="margin:0 0 20px"><a href="${esc(cal)}" style="display:inline-block;background:#161616;color:#f4f4f2;text-decoration:none;padding:12px 20px;border-radius:999px;font-size:15px">Add to calendar</a></p>
 ${o.contactEmail ? `<p style="margin:0;font-size:13px;line-height:1.5;color:#55555a">Questions? Email <a href="mailto:${esc(o.contactEmail)}" style="color:#161616">${esc(o.contactEmail)}</a>.</p>` : ''}
 </div></body></html>`;
@@ -377,8 +424,10 @@ export async function sendEventConfirmation(
     schoolName: schoolSnap!.get('name') as string,
     firstName: snap.get('buyer.firstName') as string,
     title: ev!.get('title') as string,
-    start: (ev!.get('startAt') as Timestamp).toDate(),
-    end: (ev!.get('endAt') as Timestamp).toDate(),
+    sessions: ((ev!.get('sessions') as EventSessionDoc[] | undefined) ?? [])
+      .filter((x) => ((snap.get('sessionKeys') as string[] | undefined) ?? []).includes(x.key))
+      .sort((a, b) => a.startAt.toMillis() - b.startAt.toMillis())
+      .map((x) => ({ title: x.title, start: x.startAt.toDate(), end: x.endAt.toDate() })),
     timeZone: (ev!.get('timeZone') as string | undefined) ?? 'Asia/Singapore',
     venue: String(ev!.get('venue') ?? '').trim() || null,
     qty: snap.get('qty') as number,

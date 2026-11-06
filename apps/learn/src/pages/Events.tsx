@@ -1,15 +1,25 @@
 // Public event pages (/events, /events/:eventId): anyone can buy tickets, signed in or not. The school
-// comes from the site's hostname (publicSchools). Paying opens HitPay, which sends the buyer back here
-// with ?order=…; the page then waits for the payment webhook to mark the order paid.
+// comes from the site's hostname (publicSchools). An event can hold several sessions; the buyer picks
+// one of them or the bundle of all. Paying opens HitPay, which sends the buyer back here with ?order=…;
+// the page then waits for the payment webhook to mark the order paid.
 import { ArrowRight, CalendarBlank, CheckCircle, MapPin, Ticket } from '@phosphor-icons/react';
 import { collection, query, where, type Timestamp } from 'firebase/firestore';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, NavLink, useParams, useSearchParams } from 'react-router';
-import { DEFAULT_MAX_PER_ORDER, currentTier, formatMoney, laterPrice, seatsLeft, type EventPriceTier } from '@lessonkaki/shared';
+import { DEFAULT_MAX_PER_ORDER, currentTier, formatMoney, laterPrice, optionSeatsLeft, type EventOption } from '@lessonkaki/shared';
 import { call, db, errorMessage } from '../firebase';
-import { longDayLabel, timeRange, zoneName } from '../format';
+import { longDayLabel, timeLabel, timeRange, zoneName } from '../format';
 import { logoSrc, useDoc, useProfile, useQuery, useSiteSchoolId } from '../hooks';
 import { DIAL_CODES } from './SignIn';
+
+interface PublicSession {
+  key: string;
+  title: string;
+  summary?: string;
+  startAt: Timestamp;
+  endAt: Timestamp;
+  capacity: number | null;
+}
 
 interface PublicEvent {
   title: string;
@@ -19,17 +29,18 @@ interface PublicEvent {
   endAt: Timestamp;
   timeZone: string;
   venue: string | null;
-  capacity: number | null;
   maxPerOrder?: number;
-  prices: EventPriceTier[];
+  sessions: PublicSession[];
+  options: EventOption[];
   currency: string;
   published: boolean;
   status: 'scheduled' | 'cancelled';
-  soldQty?: number;
+  soldBySession?: Record<string, number>;
 }
 
 interface CheckoutIn {
   eventId: string;
+  optionKey: string;
   qty: number;
   firstName: string;
   lastName: string;
@@ -38,8 +49,14 @@ interface CheckoutIn {
   consent: true;
   marketing: boolean;
 }
+interface OrderState {
+  status: string;
+  qty: number;
+  optionLabel: string | null;
+  email: string | null;
+}
 const startEventCheckout = call<CheckoutIn, { checkoutId: string; url: string }>('startEventCheckout');
-const eventOrderStatus = call<{ eventId: string; orderId: string }, { status: string; qty: number; email: string | null }>('eventOrderStatus');
+const eventOrderStatus = call<{ eventId: string; orderId: string }, OrderState>('eventOrderStatus');
 
 const ID = /^[A-Za-z0-9_-]+$/;
 
@@ -70,32 +87,30 @@ function PublicShell({ children }: { children: ReactNode }) {
   );
 }
 
-function When({ e }: { e: PublicEvent }) {
-  const start = e.startAt.toDate();
-  return (
-    <>
-      {longDayLabel(start, e.timeZone)}, {timeRange(start, e.endAt.toDate(), e.timeZone)}
-      {Intl.DateTimeFormat().resolvedOptions().timeZone !== e.timeZone && <span className="meta"> ({zoneName(e.timeZone)})</span>}
-    </>
-  );
+/** The browser's zone differs from the event's: say which zone times are in. */
+function ZoneNote({ tz }: { tz: string }) {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone !== tz ? <span className="meta"> ({zoneName(tz)})</span> : null;
 }
 
-/** "S$68, S$88 struck through, early bird until Saturday 14 November": the price on sale now. */
-function Price({ e, now }: { e: PublicEvent; now: Date }) {
-  const on = currentTier(e.prices, now, e.timeZone);
-  if (!on) return null;
-  const later = laterPrice(e.prices, on.index);
-  return (
-    <div className="ev-price">
-      <span className="buy-price">{formatMoney(on.tier.priceCents, e.currency)}</span>
-      {later && (
-        <span className="ev-was">
-          <s>{formatMoney(later, e.currency)}</s> {on.tier.label.toLowerCase()}
-          {on.tier.until && ` until ${longDayLabel(new Date(`${on.tier.until}T12:00:00Z`), 'UTC')}`}
-        </span>
-      )}
-    </div>
-  );
+/** An option's sessions, in time order. */
+const sessionsOf = (e: PublicEvent, o: EventOption) =>
+  o.sessionKeys
+    .map((k) => e.sessions.find((s) => s.key === k))
+    .filter((s): s is PublicSession => !!s)
+    .sort((a, b) => a.startAt.toMillis() - b.startAt.toMillis());
+
+/** Why an option can't be bought right now, or null when it can. */
+function closedReason(e: PublicEvent, o: EventOption, now: Date): string | null {
+  if (sessionsOf(e, o).some((s) => s.startAt.toMillis() <= now.getTime())) return 'Sales closed';
+  if (!currentTier(o.prices, now, e.timeZone)) return 'Sales closed';
+  if (optionSeatsLeft(o, e.sessions, e.soldBySession) === 0) return 'Sold out';
+  return null;
+}
+
+/** The cheapest price on sale now across the open options ("From S$68"). */
+function fromPrice(e: PublicEvent, now: Date): number | null {
+  const prices = e.options.filter((o) => !closedReason(e, o, now)).map((o) => currentTier(o.prices, now, e.timeZone)!.tier.priceCents);
+  return prices.length ? Math.min(...prices) : null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -129,20 +144,28 @@ export function EventList() {
         ) : (
           <ul className="ev-list">
             {upcoming.map((e) => {
-              const left = seatsLeft(e.capacity, e.soldQty);
+              const from = fromPrice(e, now);
               return (
                 <li key={e.id}>
                   <Link to={`/events/${e.id}`} className="ev-card">
                     <span className="ev-card-when">
-                      <When e={e} />
+                      {longDayLabel(e.startAt.toDate(), e.timeZone)}
+                      <ZoneNote tz={e.timeZone} />
                     </span>
                     <span className="ev-card-title">{e.title}</span>
                     {e.tagline && <span className="ev-card-tag">{e.tagline}</span>}
+                    {e.sessions.length > 1 && (
+                      <ul className="ev-card-sessions">
+                        {e.sessions.map((s) => (
+                          <li key={s.key}>
+                            <span className="ev-time">{timeLabel(s.startAt.toDate(), e.timeZone)}</span> {s.title}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                     <span className="ev-card-foot">
-                      <Price e={e} now={now} />
-                      {left === 0 ? (
-                        <span className="tag tag-muted">Sold out</span>
-                      ) : (
+                      {from !== null ? <span className="ev-from">From {formatMoney(from, e.currency)}</span> : <span className="tag tag-muted">Sold out</span>}
+                      {from !== null && (
                         <span className="text-link">
                           Get tickets <ArrowRight size={16} weight="bold" aria-hidden="true" />
                         </span>
@@ -163,11 +186,11 @@ export function EventList() {
 // /events/:eventId
 // ---------------------------------------------------------------------------------------------
 
-/** Polls tries; about a minute at 2 s each. */
+/** Status polls: about a minute at 2 s each. */
 const MAX_TRIES = 30;
 
 function OrderResult({ eventId, orderId, e }: { eventId: string; orderId: string; e: PublicEvent }) {
-  const [state, setState] = useState<{ status: string; qty: number; email: string | null } | null>(null);
+  const [state, setState] = useState<OrderState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tries, setTries] = useState(0);
 
@@ -198,10 +221,11 @@ function OrderResult({ eventId, orderId, e }: { eventId: string; orderId: string
         <CheckCircle className="done-mark" size={56} weight="fill" aria-hidden="true" />
         <h1>You're in</h1>
         <p className="done-when">
-          {state.qty} {state.qty === 1 ? 'ticket' : 'tickets'} for {e.title}
+          {state.qty} {state.qty === 1 ? 'ticket' : 'tickets'}: {state.optionLabel ?? e.title}
         </p>
         <p className="lede">
-          <When e={e} />. We've emailed your confirmation{state.email ? ` to ${state.email}` : ''}.
+          {longDayLabel(e.startAt.toDate(), e.timeZone)}
+          {e.venue ? `, ${e.venue}` : ''}. We've emailed your confirmation{state.email ? ` to ${state.email}` : ''}.
           {!e.venue && ' The venue is still to be confirmed: we will email you the address before the day.'}
         </p>
         <div className="done-actions">
@@ -233,25 +257,72 @@ function OrderResult({ eventId, orderId, e }: { eventId: string; orderId: string
   );
 }
 
+/** One ticket choice: what it includes, its price now, and the saving for a bundle. */
+function OptionChoice({ e, o, now, checked, onPick }: { e: PublicEvent; o: EventOption; now: Date; checked: boolean; onPick: () => void }) {
+  const closed = closedReason(e, o, now);
+  const on = currentTier(o.prices, now, e.timeZone);
+  const later = on ? laterPrice(o.prices, on.index) : null;
+  const parts = sessionsOf(e, o);
+  // A bundle's saving against buying its sessions one by one at today's prices.
+  const separately =
+    parts.length > 1
+      ? parts.reduce((n, s) => {
+          const single = e.options.find((x) => x.sessionKeys.length === 1 && x.sessionKeys[0] === s.key);
+          const p = single && currentTier(single.prices, now, e.timeZone);
+          return p ? n + p.tier.priceCents : NaN;
+        }, 0)
+      : NaN;
+  const saving = on && Number.isFinite(separately) ? separately - on.tier.priceCents : 0;
+  const left = optionSeatsLeft(o, e.sessions, e.soldBySession);
+  return (
+    <label className={`ev-option${checked ? ' on' : ''}${closed ? ' off' : ''}`}>
+      <input type="radio" name="option" checked={checked} disabled={!!closed} onChange={onPick} />
+      <span className="ev-option-main">
+        <span className="ev-option-title">{o.label}</span>
+        <span className="meta">{parts.map((s) => timeRange(s.startAt.toDate(), s.endAt.toDate(), e.timeZone)).join(' and ')}</span>
+        {saving > 0 && !closed && <span className="tag tag-ok">Save {formatMoney(saving, e.currency)}</span>}
+        {!closed && left !== null && left <= 10 && <span className="tag tag-warn">{left === 1 ? 'Last seat' : `${left} seats left`}</span>}
+      </span>
+      <span className="ev-option-price">
+        {closed ? (
+          <span className="tag tag-muted">{closed}</span>
+        ) : (
+          <>
+            <span className="ev-option-now">{formatMoney(on!.tier.priceCents, e.currency)}</span>
+            {later && <s className="meta">{formatMoney(later, e.currency)}</s>}
+          </>
+        )}
+      </span>
+    </label>
+  );
+}
+
 function TicketForm({ eventId, e, privacyUrl }: { eventId: string; e: PublicEvent; privacyUrl: string | null }) {
-  const left = seatsLeft(e.capacity, e.soldQty);
+  const [now] = useState(() => new Date());
+  const open = e.options.filter((o) => !closedReason(e, o, now));
+  // Start on the bundle when there is one: it's the better deal.
+  const [optionKey, setOptionKey] = useState(() => (open.find((o) => o.sessionKeys.length > 1) ?? open[0])?.key ?? '');
+  const option = open.find((o) => o.key === optionKey) ?? null;
+  const left = option ? optionSeatsLeft(option, e.sessions, e.soldBySession) : null;
   const max = Math.max(1, Math.min(e.maxPerOrder ?? DEFAULT_MAX_PER_ORDER, left ?? Infinity));
   const [qty, setQty] = useState(1);
   const [form, setForm] = useState({ firstName: '', lastName: '', email: '', dial: '+65', phone: '', consent: false, marketing: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const on = currentTier(e.prices, new Date(), e.timeZone);
-  if (!on) return null;
-  const total = on.tier.priceCents * qty;
+  const on = option ? currentTier(option.prices, now, e.timeZone) : null;
+  const n = Math.min(qty, max);
+  const earlyUntil = open.map((o) => currentTier(o.prices, now, e.timeZone)?.tier.until).find((u): u is string => !!u) ?? null;
 
   async function submit(ev: FormEvent) {
     ev.preventDefault();
+    if (!option) return;
     setBusy(true);
     setError(null);
     try {
       const { url } = await startEventCheckout({
         eventId,
-        qty,
+        optionKey: option.key,
+        qty: n,
         firstName: form.firstName,
         lastName: form.lastName,
         email: form.email.trim(),
@@ -267,17 +338,24 @@ function TicketForm({ eventId, e, privacyUrl }: { eventId: string; e: PublicEven
   }
 
   return (
-    <form className="buy-card form" onSubmit={submit} id="tickets">
+    <form className="buy-card form ev-form" onSubmit={submit} id="tickets">
       <h2>Get tickets</h2>
+      {earlyUntil && <p className="meta">Early bird prices until {longDayLabel(new Date(`${earlyUntil}T12:00:00Z`), 'UTC')}.</p>}
+      <fieldset className="ev-options">
+        <legend className="field-label">{e.options.length > 1 ? 'Choose your ticket' : 'Ticket'}</legend>
+        {e.options.map((o) => (
+          <OptionChoice key={o.key} e={e} o={o} now={now} checked={o.key === optionKey} onPick={() => setOptionKey(o.key)} />
+        ))}
+      </fieldset>
       {max > 1 && (
         <div className="field">
           <span className="field-label" id="qty-label">
-            Tickets
+            How many people
           </span>
           <div className="segmented" role="radiogroup" aria-labelledby="qty-label">
-            {Array.from({ length: max }, (_, i) => i + 1).map((n) => (
-              <button key={n} type="button" role="radio" aria-checked={qty === n} onClick={() => setQty(n)}>
-                {n}
+            {Array.from({ length: max }, (_, i) => i + 1).map((k) => (
+              <button key={k} type="button" role="radio" aria-checked={n === k} onClick={() => setQty(k)}>
+                {k}
               </button>
             ))}
           </div>
@@ -330,9 +408,9 @@ function TicketForm({ eventId, e, privacyUrl }: { eventId: string; e: PublicEven
         <input type="checkbox" checked={form.marketing} onChange={(x) => setForm({ ...form, marketing: x.target.checked })} />
         <span>Tell me about future events (optional).</span>
       </label>
-      <button className="btn btn-block" disabled={busy}>
-        {busy ? 'Opening payment' : `Pay ${formatMoney(total, e.currency)}`}
-        {!busy && <ArrowRight size={18} weight="bold" aria-hidden="true" />}
+      <button className="btn btn-block" disabled={busy || !on}>
+        {busy ? 'Opening payment' : on ? `Pay ${formatMoney(on.tier.priceCents * n, e.currency)}` : 'Pick a ticket'}
+        {!busy && on && <ArrowRight size={18} weight="bold" aria-hidden="true" />}
       </button>
       <p className="meta">Card, PayNow and more, through HitPay.</p>
       {error && (
@@ -387,22 +465,24 @@ export function EventPage() {
     );
   }
 
-  const left = seatsLeft(e.capacity, e.soldQty);
-  const onSale = currentTier(e.prices, now, e.timeZone);
+  const tz = e.timeZone;
+  const anyOpen = e.options.some((o) => !closedReason(e, o, now));
   const closed =
     e.status === 'cancelled'
       ? 'This event has been cancelled.'
       : e.endAt.toMillis() <= now.getTime()
         ? 'This event has ended.'
-        : e.startAt.toMillis() <= now.getTime() || !onSale
-          ? 'Ticket sales have closed.'
-          : left === 0
+        : !anyOpen
+          ? e.options.every((o) => closedReason(e, o, now) === 'Sold out')
             ? 'Sold out.'
-            : null;
+            : 'Ticket sales have closed.'
+          : null;
   const paragraphs = (e.description ?? '')
     .split(/\n\s*\n/)
     .map((p) => p.trim())
     .filter(Boolean);
+  const sessions = [...e.sessions].sort((a, b) => a.startAt.toMillis() - b.startAt.toMillis());
+  const from = fromPrice(e, now);
 
   return (
     <PublicShell>
@@ -417,7 +497,8 @@ export function EventPage() {
             <li>
               <CalendarBlank size={18} weight="bold" aria-hidden="true" />
               <span>
-                <When e={e} />
+                {longDayLabel(e.startAt.toDate(), tz)}, {timeRange(e.startAt.toDate(), e.endAt.toDate(), tz)}
+                <ZoneNote tz={tz} />
               </span>
             </li>
             <li>
@@ -425,8 +506,11 @@ export function EventPage() {
               <span>{e.venue ?? 'Venue to be confirmed. Ticket holders get the address by email.'}</span>
             </li>
           </ul>
-          {!closed && <Price e={e} now={now} />}
-          {!closed && left !== null && left <= 10 && <p className="tag tag-warn">{left === 1 ? 'Last seat' : `${left} seats left`}</p>}
+          {!closed && from !== null && (
+            <a className="btn ev-jump" href="#tickets">
+              Tickets from {formatMoney(from, e.currency)}
+            </a>
+          )}
         </header>
 
         <div className="ev-body">
@@ -437,6 +521,19 @@ export function EventPage() {
               ))}
             </div>
           )}
+          <ol className="ev-sessions">
+            {sessions.map((s) => (
+              <li key={s.key} className="ev-session">
+                <span className="ev-session-time">{timeRange(s.startAt.toDate(), s.endAt.toDate(), tz)}</span>
+                <h2 className="ev-session-title">{s.title}</h2>
+                {s.summary &&
+                  s.summary
+                    .split(/\n\s*\n/)
+                    .filter((p) => p.trim())
+                    .map((p, i) => <p key={i}>{p.trim()}</p>)}
+              </li>
+            ))}
+          </ol>
           {closed ? <p className="notice notice-info">{closed}</p> : <TicketForm eventId={eventId} e={e} privacyUrl={profile.data?.privacyUrl ?? null} />}
         </div>
       </article>

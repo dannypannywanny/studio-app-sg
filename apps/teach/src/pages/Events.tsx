@@ -1,11 +1,14 @@
 // Events: workshops and masterclasses sold as tickets on the learn site (/events), to anyone, no account.
-// Staff edit events directly (rules allow it, except the sold count). Orders are checkouts of kind
-// 'event', written by the ticket checkout and HitPay webhook; staff only tick people in at the door.
+// One event is one page with one or more sessions (e.g. two masterclasses the same afternoon); buyers
+// pick one session or the cheaper bundle of all of them. Staff edit events directly (rules allow it,
+// except the sold counts). Orders are checkouts of kind 'event', written by the ticket checkout and the
+// HitPay webhook; staff only tick people in at the door.
 import { Timestamp, collection, doc, getDoc, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import { useMemo, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import {
   DEFAULT_MAX_PER_ORDER,
+  buildEventOptions,
   centsToDecimal,
   currentTier,
   formatDateTime,
@@ -14,33 +17,47 @@ import {
   seatsLeft,
   wallClockToUtc,
   wallDateOf,
-  type EventPriceTier,
+  type EventOption,
 } from '@lessonkaki/shared';
 import { call, db } from '../firebase';
 import { useDoc, useQuery, useSchool, useTeachers, useTimeZone, type WithId } from '../hooks';
 import { useSchoolId, useSession } from '../session';
 
+interface SessionDoc {
+  key: string;
+  title: string;
+  summary: string;
+  startAt: Timestamp;
+  endAt: Timestamp;
+  capacity: number | null;
+}
+
 export interface EventDoc {
   title: string;
   tagline: string;
   description: string;
+  /** First session's start and last session's end (lists, and the hosts' booking block). */
   startAt: Timestamp;
   endAt: Timestamp;
   timeZone: string;
   venue: string | null;
-  capacity: number | null;
   maxPerOrder: number;
-  prices: EventPriceTier[];
+  sessions: SessionDoc[];
+  options: EventOption[];
   currency: string;
   teacherIds: string[];
   published: boolean;
   status: 'scheduled' | 'cancelled';
   soldQty?: number;
+  soldBySession?: Record<string, number>;
 }
 
 interface Order {
   kind: 'event';
   eventId: string;
+  optionKey: string;
+  optionLabel: string;
+  sessionKeys: string[];
   qty: number;
   tierLabel: string;
   amountCents: number;
@@ -56,13 +73,13 @@ interface Order {
 
 const resendConfirmation = call<{ schoolId: string; checkoutId: string }, { ok: true }>('resendEventConfirmation');
 
-/** "mando-pop-to-english-pop": the event's id, which is also its public link. */
+/** "mando-pop-to-english-pop": readable ids for events and sessions (the event id is its public link). */
 const slugify = (s: string) =>
   s
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, 60) || 'event';
+    .slice(0, 50) || 'event';
 
 /** "15:00", for time inputs. */
 const timeOf = (t: Timestamp, tz: string) =>
@@ -79,68 +96,142 @@ function learnUrl(school: unknown, eventId: string): string | null {
 // Form
 // ---------------------------------------------------------------------------------------------
 
+interface SessionRow {
+  key: string;
+  title: string;
+  summary: string;
+  start: string;
+  end: string;
+  capacity: string;
+  price: string;
+  earlyPrice: string;
+}
+
+const blankSession = (start = '15:00', end = '16:00'): SessionRow => ({ key: '', title: '', summary: '', start, end, capacity: '', price: '', earlyPrice: '' });
+
+/** Back from the stored options to the form: each session's prices, the bundle, the early bird date. */
+function formFrom(e: EventDoc) {
+  const tz = e.timeZone;
+  const option = (key: string) => e.options.find((o) => o.key === key);
+  const priceOf = (o: EventOption | undefined) => (o ? centsToDecimal(o.prices[o.prices.length - 1]!.priceCents) : '');
+  const earlyOf = (o: EventOption | undefined) => (o && o.prices.length > 1 ? centsToDecimal(o.prices[0]!.priceCents) : '');
+  const bundle = option('all');
+  return {
+    sessions: e.sessions.map(
+      (s): SessionRow => ({
+        key: s.key,
+        title: s.title,
+        summary: s.summary ?? '',
+        start: timeOf(s.startAt, tz),
+        end: timeOf(s.endAt, tz),
+        capacity: s.capacity != null ? String(s.capacity) : '',
+        price: priceOf(option(s.key)),
+        earlyPrice: earlyOf(option(s.key)),
+      }),
+    ),
+    bundleLabel: bundle?.label ?? '',
+    bundlePrice: priceOf(bundle),
+    bundleEarly: earlyOf(bundle),
+    earlyUntil: e.options.find((o) => o.prices.length > 1)?.prices[0]?.until ?? '',
+  };
+}
+
 function EventForm({ initial, onDone }: { initial: WithId<EventDoc> | null; onDone: (id: string) => void }) {
   const schoolId = useSchoolId();
   const school = useSchool().data;
   const schoolTz = useTimeZone();
   const tz = initial?.timeZone ?? schoolTz;
   const teachers = useTeachers().data.filter((t) => t.active !== false);
-  const early = initial && initial.prices.length > 1 ? initial.prices[0] : null;
-  const standard = initial ? initial.prices[initial.prices.length - 1] : null;
+  const from = initial ? formFrom(initial) : null;
   const [f, setF] = useState({
     title: initial?.title ?? '',
     tagline: initial?.tagline ?? '',
     description: initial?.description ?? '',
     date: initial ? wallDateOf(initial.startAt.toDate(), tz) : '',
-    start: initial ? timeOf(initial.startAt, tz) : '15:00',
-    end: initial ? timeOf(initial.endAt, tz) : '17:00',
     venue: initial?.venue ?? '',
-    capacity: initial?.capacity != null ? String(initial.capacity) : '',
     maxPerOrder: String(initial?.maxPerOrder ?? DEFAULT_MAX_PER_ORDER),
-    price: standard ? centsToDecimal(standard.priceCents) : '',
-    earlyPrice: early ? centsToDecimal(early.priceCents) : '',
-    earlyUntil: early?.until ?? '',
+    earlyUntil: from?.earlyUntil ?? '',
+    bundleLabel: from?.bundleLabel || 'Both classes',
+    bundlePrice: from?.bundlePrice ?? '',
+    bundleEarly: from?.bundleEarly ?? '',
     published: initial?.published ?? false,
   });
+  const [sessions, setSessions] = useState<SessionRow[]>(from?.sessions ?? [blankSession()]);
   const [hosts, setHosts] = useState<string[] | null>(initial?.teacherIds ?? null);
   // New event: hosted by the first teacher until staff choose (teachers load after the first render).
   const hostIds = hosts ?? teachers.slice(0, 1).map((t) => t.id);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
+  const setSession = (i: number, k: keyof SessionRow) => (e: { target: { value: string } }) =>
+    setSessions(sessions.map((s, j) => (j === i ? { ...s, [k]: e.target.value } : s)));
+  const anyEarly = sessions.some((s) => s.earlyPrice.trim()) || !!f.bundleEarly.trim();
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    const price = parseMoney(f.price);
-    if (price === null) return setError('Enter the ticket price, like 88.');
-    const earlyPrice = f.earlyPrice.trim() ? parseMoney(f.earlyPrice) : null;
-    if (f.earlyPrice.trim() && earlyPrice === null) return setError('Enter the early bird price, like 68, or leave it blank.');
-    if (earlyPrice !== null && !f.earlyUntil) return setError('Pick the last day of the early bird price.');
     if (!f.date) return setError('Pick the date.');
-    const startAt = wallClockToUtc(f.date, f.start, tz);
-    const endAt = wallClockToUtc(f.date, f.end, tz);
-    if (endAt <= startAt) return setError('The end time must be after the start time.');
-    if (earlyPrice !== null && f.earlyUntil > f.date) return setError('The early bird must end on or before the event day.');
-    const capacity = f.capacity.trim() ? Number(f.capacity) : null;
-    if (capacity !== null && (!Number.isInteger(capacity) || capacity < 1 || capacity > 5000)) return setError('Seats must be a whole number, or blank for no limit.');
+    /** Cents, null when optional and blank, or false after showing an error. */
+    const money = (text: string, what: string, optional = false): number | null | false => {
+      if (optional && !text.trim()) return null;
+      const n = parseMoney(text);
+      if (n === null) {
+        setError(`Enter ${what} like 88${optional ? ', or leave it blank' : ''}.`);
+        return false;
+      }
+      return n;
+    };
+    const keys = new Set<string>();
+    const built = [];
+    for (const [i, s] of sessions.entries()) {
+      if (!s.title.trim()) return setError(`Give session ${i + 1} a title.`);
+      const name = s.title.trim();
+      const startAt = wallClockToUtc(f.date, s.start, tz);
+      const endAt = wallClockToUtc(f.date, s.end, tz);
+      if (endAt <= startAt) return setError(`${name}: the end time must be after the start time.`);
+      const capacity = s.capacity.trim() ? Number(s.capacity) : null;
+      if (capacity !== null && (!Number.isInteger(capacity) || capacity < 1 || capacity > 5000)) return setError(`${name}: seats must be a whole number, or blank for no limit.`);
+      const price = money(s.price, `the price of ${name}`);
+      const early = money(s.earlyPrice, `the early bird price of ${name}`, true);
+      if (price === false || price === null || early === false) return;
+      // A saved session keeps its key: orders refer to it.
+      let key = s.key || slugify(s.title);
+      while (keys.has(key) || key === 'all') key = `${key}-${i + 1}`;
+      keys.add(key);
+      built.push({ key, title: name, summary: s.summary.trim(), startAt, endAt, capacity, price, early });
+    }
+    const bundlePrice = sessions.length > 1 ? money(f.bundlePrice, 'the price for all sessions', true) : null;
+    const bundleEarly = sessions.length > 1 && bundlePrice ? money(f.bundleEarly, 'the early bird price for all sessions', true) : null;
+    if (bundlePrice === false || bundleEarly === false) return;
+    if (anyEarly && !f.earlyUntil) return setError('Pick the last day of the early bird prices.');
+    if (anyEarly && f.earlyUntil > f.date) return setError('The early bird must end on or before the event day.');
     const maxPerOrder = Number(f.maxPerOrder);
     if (!Number.isInteger(maxPerOrder) || maxPerOrder < 1 || maxPerOrder > 20) return setError('Tickets per order must be 1 to 20.');
-    const prices: EventPriceTier[] = [
-      ...(earlyPrice !== null ? [{ label: 'Early bird', priceCents: earlyPrice, until: f.earlyUntil }] : []),
-      { label: earlyPrice !== null ? 'Standard' : 'Ticket', priceCents: price, until: null },
-    ];
+
+    built.sort((a, b) => a.startAt.getTime() - b.startAt.getTime());
+    const options = buildEventOptions(
+      built.map((s) => ({ key: s.key, title: s.title, priceCents: s.price, earlyCents: s.early })),
+      bundlePrice ? { label: f.bundleLabel.trim() || 'All sessions', priceCents: bundlePrice, earlyCents: bundleEarly } : null,
+      anyEarly ? f.earlyUntil : null,
+    );
     const data = {
       title: f.title.trim(),
       tagline: f.tagline.trim(),
       description: f.description.trim(),
-      startAt: Timestamp.fromDate(startAt),
-      endAt: Timestamp.fromDate(endAt),
+      startAt: Timestamp.fromDate(built[0]!.startAt),
+      endAt: Timestamp.fromDate(new Date(Math.max(...built.map((s) => s.endAt.getTime())))),
       timeZone: tz,
       venue: f.venue.trim() || null,
-      capacity,
       maxPerOrder,
-      prices,
+      sessions: built.map((s) => ({
+        key: s.key,
+        title: s.title,
+        summary: s.summary,
+        startAt: Timestamp.fromDate(s.startAt),
+        endAt: Timestamp.fromDate(s.endAt),
+        capacity: s.capacity,
+      })),
+      options,
       currency: school?.currency ?? 'SGD',
       teacherIds: hostIds,
       published: f.published,
@@ -151,7 +242,7 @@ function EventForm({ initial, onDone }: { initial: WithId<EventDoc> | null; onDo
       let id = initial?.id;
       if (id) await updateDoc(doc(db, 'schools', schoolId, 'events', id), data);
       else {
-        // The id is the public link; a date suffix keeps a repeat of the same title apart.
+        // The id is the public link; the month keeps a repeat of the same title apart.
         id = `${slugify(data.title)}-${f.date.slice(0, 7)}`;
         if ((await getDoc(doc(db, 'schools', schoolId, 'events', id))).exists()) {
           setBusy(false);
@@ -169,54 +260,104 @@ function EventForm({ initial, onDone }: { initial: WithId<EventDoc> | null; onDo
   return (
     <form className="card form-grid" onSubmit={submit}>
       <label className="field span-all">
-        <span>Title</span>
-        <input required maxLength={100} value={f.title} onChange={set('title')} placeholder="e.g. Mando Pop to English Pop" />
+        <span>Page title</span>
+        <input required maxLength={100} value={f.title} onChange={set('title')} placeholder="e.g. Masterclass Afternoon" />
       </label>
       <label className="field span-all">
         <span>One-line pitch</span>
-        <input maxLength={160} value={f.tagline} onChange={set('tagline')} placeholder="Learn to sing English songs the way they were designed." />
+        <input maxLength={160} value={f.tagline} onChange={set('tagline')} placeholder="Two masterclasses, one afternoon." />
       </label>
       <label className="field span-all">
-        <span>About the event</span>
-        <textarea
-          rows={6}
-          maxLength={5000}
-          value={f.description}
-          onChange={set('description')}
-          placeholder="What people will learn, who it's for, what to bring. Blank lines start new paragraphs."
-        />
+        <span>About (optional)</span>
+        <textarea rows={4} maxLength={5000} value={f.description} onChange={set('description')} placeholder="Who it's for, what to bring. Blank lines start new paragraphs." />
       </label>
       <label className="field">
         <span>Date</span>
         <input type="date" required value={f.date} onChange={set('date')} />
       </label>
-      <label className="field">
-        <span>Starts</span>
-        <input type="time" required value={f.start} onChange={set('start')} />
-      </label>
-      <label className="field">
-        <span>Ends</span>
-        <input type="time" required value={f.end} onChange={set('end')} />
-      </label>
       <label className="field span-all">
         <span>Venue (blank = "to be confirmed")</span>
         <input maxLength={300} value={f.venue} onChange={set('venue')} placeholder="Address, or a Zoom note" />
       </label>
-      <label className="field">
-        <span>Price (SGD)</span>
-        <input inputMode="decimal" required value={f.price} onChange={set('price')} placeholder="88" />
-      </label>
-      <label className="field">
-        <span>Early bird price (optional)</span>
-        <input inputMode="decimal" value={f.earlyPrice} onChange={set('earlyPrice')} placeholder="68" />
-      </label>
+
+      {sessions.map((s, i) => (
+        <fieldset key={i} className="span-all card form-grid">
+          <legend className="row">
+            <strong>Session {i + 1}</strong>
+            {sessions.length > 1 && (
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                title={s.key && initial?.soldBySession?.[s.key] ? 'Tickets are sold for this session' : undefined}
+                disabled={!!s.key && !!initial?.soldBySession?.[s.key]}
+                onClick={() => setSessions(sessions.filter((_, j) => j !== i))}
+              >
+                Remove
+              </button>
+            )}
+          </legend>
+          <label className="field span-all">
+            <span>Title</span>
+            <input required maxLength={100} value={s.title} onChange={setSession(i, 'title')} placeholder="e.g. Mando Pop to English Pop" />
+          </label>
+          <label className="field span-all">
+            <span>What it covers</span>
+            <textarea rows={3} maxLength={2000} value={s.summary} onChange={setSession(i, 'summary')} placeholder="Learn to sing English songs the way they were designed." />
+          </label>
+          <label className="field">
+            <span>Starts</span>
+            <input type="time" required value={s.start} onChange={setSession(i, 'start')} />
+          </label>
+          <label className="field">
+            <span>Ends</span>
+            <input type="time" required value={s.end} onChange={setSession(i, 'end')} />
+          </label>
+          <label className="field">
+            <span>Seats (blank = no limit)</span>
+            <input inputMode="numeric" value={s.capacity} onChange={setSession(i, 'capacity')} />
+          </label>
+          <label className="field">
+            <span>Price (SGD)</span>
+            <input inputMode="decimal" required value={s.price} onChange={setSession(i, 'price')} placeholder="88" />
+          </label>
+          <label className="field">
+            <span>Early bird price (optional)</span>
+            <input inputMode="decimal" value={s.earlyPrice} onChange={setSession(i, 'earlyPrice')} placeholder="68" />
+          </label>
+        </fieldset>
+      ))}
+      <div className="span-all">
+        <button
+          type="button"
+          className="btn btn-sm"
+          onClick={() => {
+            const last = sessions[sessions.length - 1];
+            setSessions([...sessions, { ...blankSession(last?.end, last?.end), price: last?.price ?? '', earlyPrice: last?.earlyPrice ?? '' }]);
+          }}
+        >
+          Add a session
+        </button>
+      </div>
+
+      {sessions.length > 1 && (
+        <>
+          <label className="field">
+            <span>Bundle name</span>
+            <input maxLength={60} value={f.bundleLabel} onChange={set('bundleLabel')} />
+          </label>
+          <label className="field">
+            <span>Price for all sessions (blank = no bundle)</span>
+            <input inputMode="decimal" value={f.bundlePrice} onChange={set('bundlePrice')} placeholder="148" />
+          </label>
+          <label className="field">
+            <span>Early bird price for all</span>
+            <input inputMode="decimal" value={f.bundleEarly} onChange={set('bundleEarly')} placeholder="118" disabled={!f.bundlePrice.trim()} />
+          </label>
+        </>
+      )}
       <label className="field">
         <span>Early bird until (last day, inclusive)</span>
-        <input type="date" value={f.earlyUntil} onChange={set('earlyUntil')} disabled={!f.earlyPrice.trim()} />
-      </label>
-      <label className="field">
-        <span>Seats (blank = no limit)</span>
-        <input inputMode="numeric" value={f.capacity} onChange={set('capacity')} />
+        <input type="date" value={f.earlyUntil} onChange={set('earlyUntil')} disabled={!anyEarly} />
       </label>
       <label className="field">
         <span>Most tickets per order</span>
@@ -294,11 +435,8 @@ function EventDetail({ eventId }: { eventId: string }) {
   if (editing) return <EventForm initial={e} onDone={() => setEditing(false)} />;
 
   const tz = e.timeZone;
-  const sold = paid.reduce((n, o) => n + o.qty, 0);
   const checkedIn = paid.filter((o) => o.checkedInAt).reduce((n, o) => n + o.qty, 0);
   const revenue = paid.reduce((n, o) => n + o.amountCents, 0);
-  const left = seatsLeft(e.capacity, e.soldQty);
-  const onSale = currentTier(e.prices, new Date(), tz);
   const url = learnUrl(school, eventId);
 
   const toggleIn = (o: WithId<Order>) =>
@@ -356,33 +494,50 @@ function EventDetail({ eventId }: { eventId: string }) {
       </div>
 
       <div className="tiles card">
-        <div className="tile">
-          <span className="tile-label">Tickets sold</span>
-          <span className="tile-value">
-            {sold}
-            {e.capacity != null && <span className="muted"> / {e.capacity}</span>}
-          </span>
-          {left !== null && <span className="muted">{left} seats left</span>}
-        </div>
+        {e.sessions.map((s) => {
+          const sold = e.soldBySession?.[s.key] ?? 0;
+          const left = seatsLeft(s.capacity, sold);
+          return (
+            <div className="tile" key={s.key}>
+              <span className="tile-label">
+                {s.title} · {clockOf(s.startAt, tz)}
+              </span>
+              <span className="tile-value">
+                {sold}
+                {s.capacity != null && <span className="muted"> / {s.capacity}</span>}
+              </span>
+              <span className="muted">{left !== null ? `${left} seats left` : 'attending'}</span>
+            </div>
+          );
+        })}
         <div className="tile">
           <span className="tile-label">Taken in</span>
           <span className="tile-value">{formatMoney(revenue, e.currency)}</span>
-        </div>
-        <div className="tile">
-          <span className="tile-label">On sale now</span>
-          <span className="tile-value">{onSale ? formatMoney(onSale.tier.priceCents, e.currency) : 'Closed'}</span>
-          {onSale && (
-            <span className="muted">
-              {onSale.tier.label}
-              {onSale.tier.until ? ` until ${onSale.tier.until}` : ''}
-            </span>
-          )}
-        </div>
-        <div className="tile">
-          <span className="tile-label">Checked in</span>
-          <span className="tile-value">{checkedIn}</span>
+          <span className="muted">{checkedIn} checked in</span>
         </div>
       </div>
+
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Ticket</th>
+            <th>On sale now</th>
+            <th>Until</th>
+          </tr>
+        </thead>
+        <tbody>
+          {e.options.map((o) => {
+            const on = currentTier(o.prices, new Date(), tz);
+            return (
+              <tr key={o.key}>
+                <td>{o.label}</td>
+                <td>{on ? `${formatMoney(on.tier.priceCents, e.currency)} (${on.tier.label})` : 'Closed'}</td>
+                <td>{on?.tier.until ?? '—'}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
 
       {url && (
         <div className="row">
@@ -417,8 +572,8 @@ function EventDetail({ eventId }: { eventId: string }) {
             <tr>
               <th>Name</th>
               <th>Contact</th>
-              <th className="num">Tickets</th>
-              <th>Price</th>
+              <th>Ticket</th>
+              <th className="num">Qty</th>
               <th>Paid</th>
               <th>Confirmation</th>
               <th>At the door</th>
@@ -443,8 +598,12 @@ function EventDetail({ eventId }: { eventId: string }) {
                     {o.buyer.phone}
                   </a>
                 </td>
+                <td>
+                  {o.optionLabel}
+                  <br />
+                  <span className="muted">{o.tierLabel}</span>
+                </td>
                 <td className="num">{o.qty}</td>
-                <td>{o.tierLabel}</td>
                 <td>{o.invoiceId ? <Link to={`/invoices/${o.invoiceId}`}>{formatMoney(o.amountCents, o.currency)}</Link> : formatMoney(o.amountCents, o.currency)}</td>
                 <td>
                   {o.confirmationError ? <span className="badge badge-warn">not sent</span> : o.confirmationSentAt ? <span className="muted">sent</span> : <span className="muted">—</span>}{' '}
@@ -476,6 +635,7 @@ function EventDetail({ eventId }: { eventId: string }) {
                   </td>
                   <td>{o.buyer.email}</td>
                   <td>{o.buyer.phone}</td>
+                  <td>{o.optionLabel}</td>
                   <td className="num">{o.qty}</td>
                   <td>
                     <span className="badge">{o.status}</span>
@@ -545,13 +705,12 @@ export function Events() {
               <th>Event</th>
               <th>When</th>
               <th>Venue</th>
-              <th className="num">Sold</th>
-              <th>Price now</th>
+              <th>Sessions</th>
+              <th className="num">Tickets sold</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((e) => {
-              const tier = currentTier(e.prices, new Date(), e.timeZone);
               const past = e.endAt.toMillis() < now;
               return (
                 <tr key={e.id} className={e.status === 'cancelled' || past ? 'cancelled' : ''}>
@@ -561,11 +720,8 @@ export function Events() {
                   </td>
                   <td>{formatDateTime(e.startAt.toDate(), e.timeZone)}</td>
                   <td>{e.venue ?? <span className="muted">To be confirmed</span>}</td>
-                  <td className="num">
-                    {e.soldQty ?? 0}
-                    {e.capacity != null && ` / ${e.capacity}`}
-                  </td>
-                  <td>{tier && !past ? `${formatMoney(tier.tier.priceCents, e.currency)} (${tier.tier.label})` : '—'}</td>
+                  <td>{e.sessions.map((s) => s.title).join(', ')}</td>
+                  <td className="num">{e.soldQty ?? 0}</td>
                 </tr>
               );
             })}

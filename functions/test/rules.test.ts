@@ -229,6 +229,8 @@ describe('events', () => {
     await assertSucceeds(updateDoc(doc(admin(), `schools/${A}/events/live`), { venue: 'Studio' }));
     await assertFails(updateDoc(doc(admin(), `schools/${A}/events/live`), { soldQty: 0 }));
     await assertFails(setDoc(doc(admin(), `schools/${A}/events/new`), { title: 'New', soldQty: 5 }));
+    await assertFails(updateDoc(doc(admin(), `schools/${A}/events/live`), { 'soldBySession.s1': 0 }));
+    await assertSucceeds(setDoc(doc(admin(), `schools/${A}/events/new`), { title: 'New', published: false }));
     await assertFails(deleteDoc(doc(admin(), `schools/${A}/events/live`)));
     await assertSucceeds(updateDoc(doc(admin(), `schools/${A}/checkouts/t1`), { checkedInAt: new Date() }));
     await assertFails(updateDoc(doc(admin(), `schools/${A}/checkouts/t1`), { status: 'refunded' }));

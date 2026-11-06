@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { Timestamp } from 'firebase-admin/firestore';
-import { wallClockToUtc } from '@lessonkaki/shared';
+import { buildEventOptions, wallClockToUtc } from '@lessonkaki/shared';
 import { getAvailability } from '../src/booking';
 import { handleHitPayWebhook, type HitPayClient, type PaymentRequest } from '../src/checkout';
 import type { MailSender, OutgoingMail } from '../src/alerts';
@@ -31,22 +31,34 @@ class FakeMail implements MailSender {
   }
 }
 
+/** Two classes on one afternoon, each S$88 (S$68 early bird), both for S$148 (S$118). */
 async function setup(capacity: number | null = 3) {
   const t = await school();
   const host = `learn-${t.schoolId.replace(/_/g, '-')}.example.test`;
   await db.doc(`publicSchools/${host}`).set({ schoolId: t.schoolId, site: 'learn' });
+  const session = (key: string, title: string, from: string, to: string) => ({
+    key,
+    title,
+    startAt: Timestamp.fromDate(sg('2026-11-28', from)),
+    endAt: Timestamp.fromDate(sg('2026-11-28', to)),
+    capacity,
+  });
   await db.doc(`schools/${t.schoolId}/events/masterclass`).set({
-    title: 'Mando Pop to English Pop',
+    title: 'Masterclass afternoon',
     startAt: Timestamp.fromDate(sg('2026-11-28', '15:00')),
-    endAt: Timestamp.fromDate(sg('2026-11-28', '17:00')),
+    endAt: Timestamp.fromDate(sg('2026-11-28', '17:30')),
     timeZone: TZ,
     venue: null,
-    capacity,
     maxPerOrder: 4,
-    prices: [
-      { label: 'Early bird', priceCents: 6800, until: '2026-11-14' },
-      { label: 'Standard', priceCents: 8800, until: null },
-    ],
+    sessions: [session('fundamentals', 'The Fundamentals of Vocal Technique', '15:00', '16:00'), session('mandopop', 'Mando Pop to English Pop', '16:30', '17:30')],
+    options: buildEventOptions(
+      [
+        { key: 'fundamentals', title: 'The Fundamentals of Vocal Technique', priceCents: 8800, earlyCents: 6800 },
+        { key: 'mandopop', title: 'Mando Pop to English Pop', priceCents: 8800, earlyCents: 6800 },
+      ],
+      { label: 'Both classes', priceCents: 14800, earlyCents: 11800 },
+      '2026-11-14',
+    ),
     currency: 'SGD',
     teacherIds: [t.teacherId],
     published: true,
@@ -58,6 +70,7 @@ async function setup(capacity: number | null = 3) {
 
 const buyer = (host: string, over: Partial<StartEventCheckoutInput> = {}): StartEventCheckoutInput => ({
   eventId: 'masterclass',
+  optionKey: 'mandopop',
   qty: 2,
   firstName: 'Ada',
   lastName: 'Lim',
@@ -87,15 +100,26 @@ describe('startEventCheckout', () => {
     expect(doc).toMatchObject({ kind: 'event', status: 'pending', qty: 2, unitCents: 6800, amountCents: 13600, buyer: { phone: '+6591234567' } });
   });
 
-  it('holds seats while people pay and refuses more than are left', async () => {
+  it('charges the bundle price for both classes', async () => {
+    const { host } = await setup();
+    const client = new FakeHitPay();
+    await startEventCheckout(db, client, buyer(host, { optionKey: 'all', qty: 1 }), EARLY);
+    expect(client.requests[0]!.amount).toBe('118.00');
+    await expect(startEventCheckout(db, client, buyer(host, { optionKey: 'nope' }), EARLY)).rejects.toThrow(/Pick which ticket/);
+  });
+
+  it('holds seats per class while people pay; a bundle takes a seat in each', async () => {
     const { t, host } = await setup(3);
     const client = new FakeHitPay();
-    const first = await startEventCheckout(db, client, buyer(host), EARLY);
+    const first = await startEventCheckout(db, client, buyer(host, { optionKey: 'all' }), EARLY);
+    await expect(startEventCheckout(db, client, buyer(host, { optionKey: 'fundamentals' }), EARLY)).rejects.toThrow(/Only 1 seat is left/);
     await expect(startEventCheckout(db, client, buyer(host), EARLY)).rejects.toThrow(/Only 1 seat is left/);
     // The hold runs out: the seats are free again.
     await db.doc(`schools/${t.schoolId}/checkouts/${first.checkoutId}`).update({ holdUntil: Timestamp.fromDate(new Date(EARLY.getTime() - 1)) });
     await expect(startEventCheckout(db, client, buyer(host, { qty: 3 }), EARLY)).resolves.toBeTruthy();
-    await expect(startEventCheckout(db, client, buyer(host, { qty: 1 }), EARLY)).rejects.toThrow(/sold out/);
+    await expect(startEventCheckout(db, client, buyer(host, { qty: 1 }), EARLY)).rejects.toThrow(/Mando Pop to English Pop is sold out/);
+    // The other class still has room.
+    await expect(startEventCheckout(db, client, buyer(host, { optionKey: 'fundamentals', qty: 3 }), EARLY)).resolves.toBeTruthy();
   });
 
   it('refuses too many tickets, unpublished events, past events, and missing consent', async () => {
@@ -103,7 +127,9 @@ describe('startEventCheckout', () => {
     const client = new FakeHitPay();
     await expect(startEventCheckout(db, client, buyer(host, { qty: 5 }), EARLY)).rejects.toThrow(/1 to 4 tickets/);
     await expect(startEventCheckout(db, client, buyer(host, { consent: false }), EARLY)).rejects.toThrow(/privacy notice/);
-    await expect(startEventCheckout(db, client, buyer(host), sg('2026-11-28', '15:00'))).rejects.toThrow(/closed/);
+    await expect(startEventCheckout(db, client, buyer(host, { optionKey: 'fundamentals' }), sg('2026-11-28', '15:00'))).rejects.toThrow(/closed/);
+    // The later class still sells between the two.
+    await expect(startEventCheckout(db, client, buyer(host), sg('2026-11-28', '16:10'))).resolves.toBeTruthy();
     await expect(startEventCheckout(db, null, buyer(host), EARLY)).rejects.toThrow(/not set up/);
     await db.doc(`schools/${t.schoolId}/events/masterclass`).update({ published: false });
     await expect(startEventCheckout(db, client, buyer(host), EARLY)).rejects.toThrow(/not found/);
@@ -122,14 +148,16 @@ describe('paying for tickets', () => {
     const order = (await db.doc(`schools/${t.schoolId}/checkouts/${checkoutId}`).get()).data()!;
     expect(order.status).toBe('paid');
     const lead = (await db.doc(`schools/${t.schoolId}/students/${order.studentId}`).get()).data()!;
-    expect(lead).toMatchObject({ status: 'lead', email: 'ada@example.test', signupSource: 'event', referralSource: 'Mando Pop to English Pop' });
+    expect(lead).toMatchObject({ status: 'lead', email: 'ada@example.test', signupSource: 'event', referralSource: 'Masterclass afternoon' });
     expect(await money(t, order.studentId)).toEqual({ outstandingCents: 0, moneyCreditCents: 0 });
     const inv = (await db.doc(`schools/${t.schoolId}/invoices/${order.invoiceId}`).get()).data()!;
     expect(inv).toMatchObject({ status: 'paid', totalCents: 13600, lines: [{ qty: 2, unitCents: 6800 }] });
-    expect((await db.doc(`schools/${t.schoolId}/events/masterclass`).get()).get('soldQty')).toBe(2);
+    const ev = (await db.doc(`schools/${t.schoolId}/events/masterclass`).get()).data()!;
+    expect(ev.soldBySession).toEqual({ mandopop: 2 });
     expect(mail.sent).toHaveLength(1);
     expect(mail.sent[0]).toMatchObject({ to: ['ada@example.test'], subject: "You're in: Mando Pop to English Pop" });
-    expect(await eventOrderStatus(db, { host, eventId: 'masterclass', orderId: checkoutId })).toEqual({ status: 'paid', qty: 2, email: 'ad***@example.test' });
+    expect(mail.sent[0]!.text).toMatch(/Saturday,? 28 November 2026, 4:30 pm to 5:30 pm/);
+    expect(await eventOrderStatus(db, { host, eventId: 'masterclass', orderId: checkoutId })).toEqual({ status: 'paid', qty: 2, optionLabel: 'Mando Pop to English Pop', email: 'ad***@example.test' });
   });
 
   it('uses the record already on file for that email', async () => {
@@ -165,13 +193,33 @@ describe('booking around events', () => {
 });
 
 describe('renderConfirmation', () => {
+  it('lists each class of a bundle with its time', () => {
+    const mail = renderConfirmation({
+      schoolName: 'Studio',
+      firstName: 'Ada',
+      title: 'Masterclass afternoon',
+      sessions: [
+        { title: 'Fundamentals', start: sg('2026-11-28', '15:00'), end: sg('2026-11-28', '16:00') },
+        { title: 'Mando Pop', start: sg('2026-11-28', '16:30'), end: sg('2026-11-28', '17:30') },
+      ],
+      timeZone: TZ,
+      venue: 'Studio A',
+      qty: 1,
+      amountCents: 11800,
+      currency: 'SGD',
+      contactEmail: null,
+    });
+    expect(mail.subject).toBe("You're in: Masterclass afternoon");
+    expect(mail.text).toContain('Fundamentals: 3:00 pm to 4:00 pm');
+    expect(mail.text).toContain('Mando Pop: 4:30 pm to 5:30 pm');
+  });
+
   it('says the venue is to be confirmed until it is set', () => {
     const mail = renderConfirmation({
       schoolName: 'Studio',
       firstName: 'Ada',
       title: 'Masterclass',
-      start: sg('2026-11-28', '15:00'),
-      end: sg('2026-11-28', '17:00'),
+      sessions: [{ title: 'Masterclass', start: sg('2026-11-28', '15:00'), end: sg('2026-11-28', '17:00') }],
       timeZone: TZ,
       venue: null,
       qty: 1,

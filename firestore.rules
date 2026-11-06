@@ -124,11 +124,11 @@ service cloud.firestore {
       }
 
       // Events sold as tickets on the learn site: anyone may read a published one (signed out too).
-      // soldQty is kept by the payment webhook only.
+      // soldQty and soldBySession are kept by the payment webhook only.
       match /events/{id} {
         allow read: if resource.data.published == true || isStaff(s);
-        allow create: if isStaff(s) && !('soldQty' in request.resource.data);
-        allow update: if isStaff(s) && untouched(['soldQty']);
+        allow create: if isStaff(s) && !request.resource.data.keys().hasAny(['soldQty', 'soldBySession']);
+        allow update: if isStaff(s) && untouched(['soldQty', 'soldBySession']);
         allow delete: if isStaff(s) && resource.data.get('soldQty', 0) == 0;
       }
       match /slotLocks/{id} { allow read, write: if false; }

@@ -373,9 +373,29 @@ button { font: inherit; color: inherit; }
 .ev-kicker svg { color: var(--tan-deep); }
 .ev-facts { margin-top: 18px; }
 .ev-facts li { color: var(--ink); }
-.ev-price { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
-.ev-was { color: var(--ink-2); font-size: 0.95rem; }
-.ev-was s { text-decoration-thickness: 1.5px; }
+.ev-from { font-family: var(--font-display); font-weight: 600; font-size: 1.25rem; letter-spacing: -0.02em; }
+.ev-card-sessions { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; color: var(--ink); }
+.ev-time { display: inline-block; min-width: 4.6em; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.ev-jump { margin-top: 20px; }
+.ev-sessions { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.ev-session { background: var(--surface); border-radius: var(--r-card); padding: 20px 22px; }
+.ev-session > * + * { margin-top: 8px; }
+.ev-session-time { color: var(--ink-2); font-weight: 550; font-size: 0.92rem; font-variant-numeric: tabular-nums; }
+.ev-session-title { font-size: 1.3rem; }
+.ev-session p { color: var(--ink); line-height: 1.6; max-width: 62ch; }
+.ev-options { border: 0; margin: 0; padding: 0; display: grid; gap: 10px; }
+.ev-options legend { margin-bottom: 8px; }
+.ev-option {
+  display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-radius: 16px;
+  border: 1.5px solid var(--line); cursor: pointer; transition: border-color 0.2s var(--ease), background-color 0.2s var(--ease);
+}
+.ev-option.on { border-color: var(--tan-deep); background: var(--tan-soft); }
+.ev-option.off { cursor: default; opacity: 0.6; }
+.ev-option input { margin-top: 4px; width: 18px; height: 18px; accent-color: var(--ink); flex: none; }
+.ev-option-main { display: grid; gap: 4px; flex: 1; min-width: 0; justify-items: start; }
+.ev-option-title { font-weight: 600; }
+.ev-option-price { display: grid; justify-items: end; gap: 2px; flex: none; }
+.ev-option-now { font-family: var(--font-display); font-weight: 600; font-size: 1.3rem; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .ev-body { display: grid; gap: 28px; margin-top: 32px; }
 .ev-about { max-width: 62ch; }
 .ev-about > * + * { margin-top: 14px; }
