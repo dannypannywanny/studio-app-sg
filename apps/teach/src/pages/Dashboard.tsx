@@ -44,7 +44,9 @@ export function Dashboard() {
     .filter((s) => (s.summary?.sessionsOwed ?? 0) > 0)
     .sort((a, b) => (b.summary?.sessionsOwed ?? 0) - (a.summary?.sessionsOwed ?? 0));
   const owedLessons = owing.reduce((n, s) => n + (s.summary?.sessionsOwed ?? 0), 0);
-  const scheduled = lessons.data.filter((l) => l.status !== 'cancelled');
+  // Lessons cancelled by the studio or by everyone on them are off today's list (the calendar keeps them).
+  const scheduled = lessons.data.filter((l) => !isLessonCancelled(l));
+  const cancelledToday = lessons.data.length - scheduled.length;
   const followUps = students.data
     .filter((s) => isOpenLead(s) && s.lead?.followUpOn && s.lead.followUpOn <= today)
     .sort((a, b) => (a.lead!.followUpOn! < b.lead!.followUpOn! ? -1 : 1));
@@ -93,13 +95,13 @@ export function Dashboard() {
         <h2>Today's lessons</h2>
         {lessons.loading ? (
           <p className="muted">Loading…</p>
-        ) : lessons.data.length === 0 ? (
+        ) : scheduled.length === 0 ? (
           <p className="empty">No lessons today.</p>
         ) : (
           <table className="table">
             <tbody>
-              {lessons.data.map((l) => (
-                <tr key={l.id} className={isLessonCancelled(l) ? 'cancelled' : ''}>
+              {scheduled.map((l) => (
+                <tr key={l.id}>
                   <td>
                     <Link to={lessonHref(l.id)}>{wallTimeOf(l.startAt.toDate(), tz)}</Link>
                     <span className="muted"> · {l.durationMin} min</span>
@@ -107,16 +109,17 @@ export function Dashboard() {
                   <td>{lessonStudents(l, students.byId) || '—'}</td>
                   <td>{teachers.byId.get(l.teacherId)?.displayName ?? '—'}</td>
                   <td>
-                    {isLessonCancelled(l) ? (
-                      <span className="badge badge-cancelled">Cancelled</span>
-                    ) : (
-                      <span className={`badge badge-${l.attendanceState}`}>{STATE_LABEL[l.attendanceState]}</span>
-                    )}
+                    <span className={`badge badge-${l.attendanceState}`}>{STATE_LABEL[l.attendanceState]}</span>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        )}
+        {cancelledToday > 0 && (
+          <p className="muted">
+            {cancelledToday} cancelled lesson{cancelledToday === 1 ? '' : 's'} not shown. <Link to="/calendar?view=day">See the calendar</Link>
+          </p>
         )}
       </div>
 

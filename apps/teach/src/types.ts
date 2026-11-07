@@ -49,6 +49,8 @@ export interface Package {
   priceCents: number;
   validityDays: number | null;
   subjectId?: string | null;
+  /** 'trial' packages are the only ones a trial lesson takes a credit from. */
+  kind?: 'paid' | 'trial' | 'single';
   active: boolean;
 }
 
@@ -95,6 +97,8 @@ export interface Lead {
 
 export interface Enrolment {
   studentId: string;
+  /** The package it was sold from (absent for grants and migrated balances). */
+  packageId?: string | null;
   packageName: string;
   invoiceId: string | null;
   sessionsTotal: number;

@@ -21,6 +21,8 @@ export interface LotState {
   readonly id: string;
   readonly ref: DocumentReference;
   readonly studentId: string;
+  /** The package it was sold from (null for grants and migrated balances). */
+  readonly packageId: string | null;
   /** Changes only when staff extend a package (editInvoice); the date itself is written by the caller. */
   validUntilMs: number;
   readonly validFromMs: number;
@@ -85,6 +87,7 @@ export class CreditTx {
       id: snap.id,
       ref: snap.ref,
       studentId: snap.get('studentId') as string,
+      packageId: (snap.get('packageId') as string | null | undefined) ?? null,
       validUntilMs: millis(snap.get('validUntil')),
       validFromMs: millis(snap.get('validFrom')),
       total: snap.get('sessionsTotal') as number,
@@ -108,6 +111,7 @@ export class CreditTx {
       id: ref.id,
       ref,
       studentId: fields.studentId,
+      packageId: typeof fields.packageId === 'string' ? fields.packageId : null,
       validUntilMs: fields.validUntil.toMillis(),
       validFromMs: fields.validFrom.toMillis(),
       total: sessions,

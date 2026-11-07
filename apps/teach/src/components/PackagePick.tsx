@@ -1,13 +1,14 @@
 // Which package (invoice) pays for a student's lesson. "Auto" = the earliest-expiring package with credits
 // left (the default); staff can pick a specific one. Saved on the attendee (setAttendeePackage). Before
 // marking it is remembered; after marking, picking another package moves the credit there.
+// A trial lesson only ever uses a trial package (Packages, type Trial); with none it's free.
 import { collection, query, where } from 'firebase/firestore';
 import { useMemo } from 'react';
 import { formatDate } from '@lessonkaki/shared';
 import { call, db } from '../firebase';
 import { useQuery, useTimeZone } from '../hooks';
 import { useSchoolId } from '../session';
-import type { Enrolment, Invoice } from '../types';
+import type { Enrolment, Invoice, Package } from '../types';
 
 export const setAttendeePackage = call<
   { schoolId: string; lessonId: string; studentId: string; enrolmentId: string | null },
@@ -23,6 +24,14 @@ export function useActiveLots(studentId: string, keep: string | null = null) {
   return lots.data
     .filter((l) => l.id === keep || (l.status === 'active' && l.sessionsRemaining > 0))
     .sort((a, b) => a.validUntil.toMillis() - b.validUntil.toMillis());
+}
+
+/** The school's trial packages, retired ones too (an old sale still pays for its trial). */
+export function useTrialPackages() {
+  const schoolId = useSchoolId();
+  return useQuery<Package>(`trialPackages:${schoolId}`, () =>
+    query(collection(db, 'schools', schoolId, 'packages'), where('kind', '==', 'trial')),
+  ).data;
 }
 
 /** Invoice number by invoice id, for naming packages the way staff know them. */
@@ -48,11 +57,13 @@ export function PackageSelect({
   disabled?: boolean;
   /** A credit was already taken (value = the package it came from, null = owed). */
   charged?: boolean;
-  /** A lead's trial: with no package it's free, not owed. */
+  /** A trial lesson: only trial packages pay for it, and with none it's free, not owed. */
   trial?: boolean;
 }) {
   const tz = useTimeZone();
-  const lots = useActiveLots(studentId, charged ? value : null);
+  const trialIds = new Set(useTrialPackages().map((p) => p.id));
+  const keep = charged ? value : null;
+  const lots = useActiveLots(studentId, keep).filter((l) => !trial || l.id === keep || (l.packageId && trialIds.has(l.packageId)));
   const numbers = useInvoiceNumbers(studentId);
   const far = (l: Enrolment) => l.validUntil.toDate().getUTCFullYear() >= 2900;
   const label = (l: Enrolment) => {
@@ -62,8 +73,9 @@ export function PackageSelect({
       .join(' · ');
   };
   // After marking there's no "auto": the credit sits on one package (or is owed).
-  const none = trial ? 'No package: free trial' : 'No package with credits: owed';
-  const empty = charged ? (value ? null : 'Owed (no package)') : lots.length ? 'Auto: earliest expiry' : none;
+  const none = trial ? 'No trial package: free trial' : 'No package with credits: owed';
+  const auto = trial ? 'Auto: their trial package' : 'Auto: earliest expiry';
+  const empty = charged ? (value ? null : trial ? 'Free trial' : 'Owed (no package)') : lots.length ? auto : none;
   return (
     <select
       className="package-select"

@@ -1,7 +1,7 @@
 // New lesson: one-off or weekly series. Used by the calendar and the lesson list.
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router';
-import { WEEKDAYS, wallClockToUtc, wallDateOf, weekdayOf, type Weekday } from '@lessonkaki/shared';
+import { WEEKDAYS, formatMoney, wallClockToUtc, wallDateOf, weekdayOf, type Weekday } from '@lessonkaki/shared';
 import { call } from '../firebase';
 import { useTimeZone } from '../hooks';
 import { useLessonTypes } from './LessonTypes';
@@ -9,8 +9,9 @@ import { ConflictBanner } from './Conflicts';
 import { useRooms } from './Rooms';
 import { useOpenLesson } from './LessonSheet';
 import { StudentMultiPicker } from './StudentPicker';
-import { PackageSelect, setAttendeePackage } from './PackagePick';
+import { PackageSelect, setAttendeePackage, useActiveLots, useTrialPackages } from './PackagePick';
 import { studentName, useStudents } from '../hooks';
+import type { Package } from '../types';
 import { useSchoolId, useSession } from '../session';
 
 interface Shape {
@@ -23,7 +24,46 @@ interface Shape {
   locationId: string | null;
 }
 
-const createLesson = call<Shape & { startAt: string }, { lessonId: string }>('createLesson');
+const createLesson = call<Shape & { startAt: string; trialStudentIds: string[] }, { lessonId: string }>('createLesson');
+const sellPackage = call<{ schoolId: string; studentId: string; packageId: string; idempotencyKey: string }, { enrolmentId: string; invoiceNumber: string }>(
+  'sellPackage',
+);
+
+/**
+ * What a student comes for: '' an ordinary lesson (paid from their packages), 'trial' a trial (their trial
+ * package if they have one, else free), or `sell:<packageId>` a paid trial, invoiced when it's booked.
+ */
+type Visit = '' | 'trial' | `sell:${string}`;
+
+function VisitSelect({
+  studentId,
+  isLead,
+  value,
+  onChange,
+  trialPackages,
+}: {
+  studentId: string;
+  isLead: boolean;
+  value: Visit;
+  onChange: (v: Visit) => void;
+  trialPackages: (Package & { id: string })[];
+}) {
+  const trialIds = new Set(trialPackages.map((p) => p.id));
+  const owned = useActiveLots(studentId).filter((l) => l.packageId && trialIds.has(l.packageId));
+  return (
+    <select className="package-select" aria-label="Lesson or trial" value={value} onChange={(e) => onChange(e.target.value as Visit)}>
+      {!isLead && <option value="">Lesson</option>}
+      <option value="trial">{owned.length ? `Trial: uses their ${owned[0]!.packageName}` : 'Free trial'}</option>
+      {trialPackages
+        .filter((p) => p.active)
+        .map((p) => (
+          <option key={p.id} value={`sell:${p.id}`}>
+            Paid trial: {p.name} · {formatMoney(p.priceCents)} (invoice now)
+          </option>
+        ))}
+    </select>
+  );
+}
 const createSeries = call<
   Shape & { startDate: string; time: string; byDay: Weekday[]; until: string | null; skipConflicts: boolean },
   { seriesId: string; lessonIds: string[]; skipped: string[] }
@@ -72,6 +112,8 @@ export function LessonForm({ onDone, initialDate, trialFor }: { onDone: () => vo
   const [minutes, setMinutes] = useState<number | null>(trialFor ? TRIAL_MINUTES : null);
   const [studentIds, setStudentIds] = useState<string[]>(trialFor ? [trialFor] : []);
   const [packages, setPackages] = useState<Record<string, string | null>>({});
+  const [visits, setVisits] = useState<Record<string, Visit>>({});
+  const trialPackages = useTrialPackages();
   const places = useRooms();
   const [roomId, setRoomId] = useState('');
   const room = places.rooms.find((r) => r.id === roomId) ?? places.rooms[0] ?? null;
@@ -87,9 +129,26 @@ export function LessonForm({ onDone, initialDate, trialFor }: { onDone: () => vo
     );
   const [isOnline, setOnline] = useState(false);
   const [repeatsWanted, setRepeats] = useState(false);
-  // Leads come for a single trial lesson; weekly lessons are for students.
-  const hasLead = studentIds.some((id) => students.byId.get(id)?.status === 'lead');
-  const repeats = repeatsWanted && !hasLead;
+  // Leads always come for a trial; a student can too. Trials are single lessons, never weekly.
+  const isLead = (id: string) => students.byId.get(id)?.status === 'lead';
+  const visitOf = (id: string): Visit => visits[id] ?? (isLead(id) ? 'trial' : '');
+  const hasLead = studentIds.some(isLead);
+  const hasTrial = studentIds.some((id) => visitOf(id) !== '');
+  const repeats = repeatsWanted && !hasTrial;
+  // Paid trials: the trial package is sold (invoice) and set to pay for the new lesson.
+  const invoiceTrials = (lessonId: string) =>
+    Promise.all(
+      studentIds.flatMap((studentId) => {
+        const v = visitOf(studentId);
+        if (!v.startsWith('sell:')) return [];
+        const packageId = v.slice('sell:'.length);
+        return [
+          sellPackage({ schoolId, studentId, packageId, idempotencyKey: `trial_${lessonId}_${studentId}` }).then((r) =>
+            setAttendeePackage({ schoolId, lessonId, studentId, enrolmentId: r.enrolmentId }),
+          ),
+        ];
+      }),
+    );
   const [byDay, setByDay] = useState<Weekday[] | null>(null);
   const [until, setUntil] = useState('');
   const [busy, setBusy] = useState(false);
@@ -120,10 +179,17 @@ export function LessonForm({ onDone, initialDate, trialFor }: { onDone: () => vo
         onDone();
         if (res.lessonIds[0]) openLesson(res.lessonIds[0]);
       } else {
-        const { lessonId } = await createLesson({ ...shape, startAt: wallClockToUtc(date, time, tz).toISOString() });
+        const trialStudentIds = studentIds.filter((id) => visitOf(id) !== '' && !isLead(id));
+        const { lessonId } = await createLesson({ ...shape, trialStudentIds, startAt: wallClockToUtc(date, time, tz).toISOString() });
         await applyPackages([lessonId]);
+        // The lesson exists now, so close the form either way (saving again would book it twice).
+        const invoiced = await invoiceTrials(lessonId).then(
+          () => null,
+          (err: Error) => err.message,
+        );
         onDone();
         openLesson(lessonId);
+        if (invoiced) window.alert(`The trial is booked, but its invoice wasn't created: ${invoiced} Sell the trial package from the student's page.`);
       }
     } catch (err) {
       const e = err as CallableError;
@@ -210,8 +276,11 @@ export function LessonForm({ onDone, initialDate, trialFor }: { onDone: () => vo
         <input type="checkbox" checked={isOnline} onChange={(e) => setOnline(e.target.checked)} />
         <span>Online</span>
       </label>
-      {hasLead ? (
-        <p className="muted span-all">Leads are booked for a single trial lesson. It's free unless they have a package.</p>
+      {hasTrial ? (
+        <p className="muted span-all">
+          {hasLead ? 'Leads are booked for a single trial lesson. ' : 'Trials are single lessons. '}A trial never uses a student's regular
+          package: it's free, or paid by a trial package (choose one below to invoice it now).
+        </p>
       ) : (
         <label className="field checkbox span-all">
           <input type="checkbox" checked={repeats} onChange={(e) => setRepeats(e.target.checked)} />
@@ -246,12 +315,21 @@ export function LessonForm({ onDone, initialDate, trialFor }: { onDone: () => vo
             {studentIds.map((id) => (
               <label key={id} className="package-pick">
                 <span>{studentName(students.byId.get(id))}</span>
-                <PackageSelect
-                  studentId={id}
-                  trial={students.byId.get(id)?.status === 'lead'}
-                  value={packages[id] ?? null}
-                  onChange={(v) => setPackages({ ...packages, [id]: v })}
-                />
+                {(isLead(id) || !repeats) && (trialPackages.length > 0 || !isLead(id)) && (
+                  <VisitSelect
+                    studentId={id}
+                    isLead={isLead(id)}
+                    value={visitOf(id)}
+                    onChange={(v) => setVisits({ ...visits, [id]: v })}
+                    trialPackages={trialPackages}
+                  />
+                )}
+                {visitOf(id) === '' ? (
+                  <PackageSelect studentId={id} value={packages[id] ?? null} onChange={(v) => setPackages({ ...packages, [id]: v })} />
+                ) : (
+                  visitOf(id) === 'trial' &&
+                  trialPackages.length === 0 && <span className="muted">Free trial</span>
+                )}
               </label>
             ))}
           </div>
@@ -259,7 +337,7 @@ export function LessonForm({ onDone, initialDate, trialFor }: { onDone: () => vo
       </fieldset>
       <div className="form-actions">
         <button className="btn btn-primary" disabled={busy}>
-          {busy ? 'Saving…' : repeats ? 'Create weekly lessons' : trialFor ? 'Book trial' : 'Create lesson'}
+          {busy ? 'Saving…' : repeats ? 'Create weekly lessons' : trialFor || hasTrial ? 'Book trial' : 'Create lesson'}
         </button>
         <button type="button" className="btn btn-ghost" onClick={onDone}>
           Cancel

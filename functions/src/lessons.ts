@@ -28,6 +28,8 @@ export function findClash(
     (d) =>
       !ignore.has(d.id) &&
       d.get('status') !== 'cancelled' &&
+      // Everyone on it cancelled: the time is free again, as on the booking page.
+      d.get('studentsCancelled') !== true &&
       (d.get('startAt') as Timestamp).toMillis() < endMs &&
       (d.get('endAt') as Timestamp).toMillis() > startMs,
   );
@@ -58,7 +60,7 @@ export function writeLesson(
   overwrite = false,
   /** Who put the students on it: staff ('admin') or the student portal ('portal'). */
   source: 'admin' | 'portal' = 'admin',
-  /** Leads on it for a trial (shown as "Name (Trial)"; free unless they have a package). */
+  /** Students on it for a trial (shown as "Name (Trial)"; free unless a trial package pays). */
   trialIds: readonly string[] = [],
 ): void {
   const startTs = Timestamp.fromMillis(startMs);
@@ -129,6 +131,8 @@ export interface CreateLessonInput {
   isOnline: boolean;
   locationId?: string | null;
   meetingUrl?: string | null;
+  /** Students (not leads) coming for a trial; leads on the lesson are always trials. */
+  trialStudentIds?: string[];
 }
 
 export interface CreateLessonResult {
@@ -163,7 +167,7 @@ export async function createLesson(
     }
 
     const lessonRef = school.collection('lessons').doc();
-    const trialIds = leadSnaps.map((s) => s.id);
+    const trialIds = [...new Set([...leadSnaps.map((s) => s.id), ...(input.trialStudentIds ?? []).filter((id) => studentIds.includes(id))])];
     writeLesson(tx, lessonRef, input.schoolId, input, start, studentIds, actor, null, false, 'admin', trialIds);
     for (const lead of leadSnaps) markTrialBooked(tx, lead);
     // A lesson entered after the fact is record-keeping, not a booking.
