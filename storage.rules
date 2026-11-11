@@ -2,10 +2,28 @@ rules_version = '2';
 
 // Invoice PDFs and other school files are private. Clients never read Storage directly:
 // staff and students get a short-lived signed URL from the getInvoicePdfUrl function.
+// The one exception is event pictures: owners and admins upload them from teach, and the learn site
+// shows them through their download URL (which carries its own token), so public reads stay closed here.
+// Role checks mirror firestore.rules (claims r[schoolId], staff only with a second factor).
 service firebase.storage {
   match /b/{bucket}/o {
+    function secondFactor() {
+      let t = request.auth.token;
+      return t.get('firebase', {}).get('sign_in_second_factor', null) != null || t.get('devNoMfa', false) == true;
+    }
+    function isStaff(s) {
+      return request.auth != null && request.auth.token.get('r', {}).get(s, null) in ['owner', 'admin'] && secondFactor();
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
+    }
+
+    match /schools/{schoolId}/events/{eventId}/{file} {
+      allow read, delete: if isStaff(schoolId);
+      allow create, update: if isStaff(schoolId)
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/(webp|jpeg|png)');
     }
   }
 }

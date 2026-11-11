@@ -380,6 +380,9 @@ button { font: inherit; color: inherit; }
 .ev-sessions { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
 .ev-session { background: var(--surface); border-radius: var(--r-card); padding: 20px 22px; }
 .ev-session > * + * { margin-top: 8px; }
+.ev-session-pic { display: block; width: calc(100% + 44px); max-width: none; margin: -20px -22px 8px; aspect-ratio: 3 / 2; object-fit: cover; border-radius: var(--r-card) var(--r-card) 0 0; background: var(--tan-soft); }
+.ev-card-pics { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; margin: -22px -24px 10px; border-radius: var(--r-card) var(--r-card) 0 0; overflow: hidden; }
+.ev-card-pics img { display: block; width: 100%; aspect-ratio: 3 / 2; object-fit: cover; background: var(--tan-soft); }
 .ev-session-time { color: var(--ink-2); font-weight: 550; font-size: 0.92rem; font-variant-numeric: tabular-nums; }
 .ev-session-title { font-size: 1.3rem; }
 .ev-session p { color: var(--ink); line-height: 1.6; max-width: 62ch; }

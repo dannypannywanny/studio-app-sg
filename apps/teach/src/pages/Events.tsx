@@ -4,6 +4,7 @@
 // except the sold counts). Orders are checkouts of kind 'event', written by the ticket checkout and the
 // HitPay webhook; staff only tick people in at the door.
 import { Timestamp, collection, doc, getDoc, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
+import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
 import { useMemo, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import {
@@ -19,7 +20,7 @@ import {
   wallDateOf,
   type EventOption,
 } from '@lessonkaki/shared';
-import { call, db } from '../firebase';
+import { call, db, storage } from '../firebase';
 import { useDoc, useQuery, useSchool, useTeachers, useTimeZone, type WithId } from '../hooks';
 import { useSchoolId, useSession } from '../session';
 
@@ -30,6 +31,8 @@ interface SessionDoc {
   startAt: Timestamp;
   endAt: Timestamp;
   capacity: number | null;
+  /** Banner picture on the learn page (a Storage download URL), or none. */
+  imageUrl?: string | null;
 }
 
 export interface EventDoc {
@@ -105,9 +108,27 @@ interface SessionRow {
   capacity: string;
   price: string;
   earlyPrice: string;
+  imageUrl: string;
+  /** A picture picked in this edit, uploaded on save, and its local preview. */
+  file: File | null;
+  preview: string;
 }
 
-const blankSession = (start = '15:00', end = '16:00'): SessionRow => ({ key: '', title: '', summary: '', start, end, capacity: '', price: '', earlyPrice: '' });
+/** Pictures go up at most this wide, as WebP: a phone photo or a 1536px AI image ends up around 200 KB. */
+const IMAGE_MAX_W = 1600;
+
+async function shrinkImage(file: File): Promise<Blob> {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, IMAGE_MAX_W / bitmap.width);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not read that picture.'))), 'image/webp', 0.85));
+}
+
+const blankSession = (start = '15:00', end = '16:00'): SessionRow => ({ key: '', title: '', summary: '', start, end, capacity: '', price: '', earlyPrice: '', imageUrl: '', file: null, preview: '' });
 
 /** Back from the stored options to the form: each session's prices, the bundle, the early bird date. */
 function formFrom(e: EventDoc) {
@@ -127,6 +148,9 @@ function formFrom(e: EventDoc) {
         capacity: s.capacity != null ? String(s.capacity) : '',
         price: priceOf(option(s.key)),
         earlyPrice: earlyOf(option(s.key)),
+        imageUrl: s.imageUrl ?? '',
+        file: null,
+        preview: '',
       }),
     ),
     bundleLabel: bundle?.label ?? '',
@@ -198,7 +222,7 @@ function EventForm({ initial, onDone }: { initial: WithId<EventDoc> | null; onDo
       let key = s.key || slugify(s.title);
       while (keys.has(key) || key === 'all') key = `${key}-${i + 1}`;
       keys.add(key);
-      built.push({ key, title: name, summary: s.summary.trim(), startAt, endAt, capacity, price, early });
+      built.push({ key, title: name, summary: s.summary.trim(), startAt, endAt, capacity, price, early, imageUrl: s.imageUrl || null, file: s.file });
     }
     const bundlePrice = sessions.length > 1 ? money(f.bundlePrice, 'the price for all sessions', true) : null;
     const bundleEarly = sessions.length > 1 && bundlePrice ? money(f.bundleEarly, 'the early bird price for all sessions', true) : null;
@@ -209,6 +233,25 @@ function EventForm({ initial, onDone }: { initial: WithId<EventDoc> | null; onDo
     if (!Number.isInteger(maxPerOrder) || maxPerOrder < 1 || maxPerOrder > 20) return setError('Tickets per order must be 1 to 20.');
 
     built.sort((a, b) => a.startAt.getTime() - b.startAt.getTime());
+    // The id is the public link; the month keeps a repeat of the same title apart.
+    const id = initial?.id ?? `${slugify(f.title.trim())}-${f.date.slice(0, 7)}`;
+    setBusy(true);
+    try {
+      if (!initial && (await getDoc(doc(db, 'schools', schoolId, 'events', id))).exists()) {
+        setBusy(false);
+        return setError('There is already an event with this title that month. Change the title.');
+      }
+      // Pictures first, so the saved event never points at a file that isn't there.
+      for (const s of built) {
+        if (!s.file) continue;
+        const file = storageRef(storage, `schools/${schoolId}/events/${id}/${s.key}-${Date.now()}.webp`);
+        await uploadBytes(file, await shrinkImage(s.file), { contentType: 'image/webp', cacheControl: 'public, max-age=31536000' });
+        s.imageUrl = await getDownloadURL(file);
+      }
+    } catch (err) {
+      setBusy(false);
+      return setError(`The picture didn't upload: ${(err as Error).message}`);
+    }
     const options = buildEventOptions(
       built.map((s) => ({ key: s.key, title: s.title, priceCents: s.price, earlyCents: s.early })),
       bundlePrice ? { label: f.bundleLabel.trim() || 'All sessions', priceCents: bundlePrice, earlyCents: bundleEarly } : null,
@@ -230,6 +273,7 @@ function EventForm({ initial, onDone }: { initial: WithId<EventDoc> | null; onDo
         startAt: Timestamp.fromDate(s.startAt),
         endAt: Timestamp.fromDate(s.endAt),
         capacity: s.capacity,
+        imageUrl: s.imageUrl,
       })),
       options,
       currency: school?.currency ?? 'SGD',
@@ -237,19 +281,9 @@ function EventForm({ initial, onDone }: { initial: WithId<EventDoc> | null; onDo
       published: f.published,
       updatedAt: serverTimestamp(),
     };
-    setBusy(true);
     try {
-      let id = initial?.id;
-      if (id) await updateDoc(doc(db, 'schools', schoolId, 'events', id), data);
-      else {
-        // The id is the public link; the month keeps a repeat of the same title apart.
-        id = `${slugify(data.title)}-${f.date.slice(0, 7)}`;
-        if ((await getDoc(doc(db, 'schools', schoolId, 'events', id))).exists()) {
-          setBusy(false);
-          return setError('There is already an event with this title that month. Change the title.');
-        }
-        await setDoc(doc(db, 'schools', schoolId, 'events', id), { ...data, status: 'scheduled', createdAt: serverTimestamp() });
-      }
+      if (initial) await updateDoc(doc(db, 'schools', schoolId, 'events', id), data);
+      else await setDoc(doc(db, 'schools', schoolId, 'events', id), { ...data, status: 'scheduled', createdAt: serverTimestamp() });
       onDone(id);
     } catch (err) {
       setError((err as Error).message);
@@ -324,6 +358,28 @@ function EventForm({ initial, onDone }: { initial: WithId<EventDoc> | null; onDo
             <span>Early bird price (optional)</span>
             <input inputMode="decimal" value={s.earlyPrice} onChange={setSession(i, 'earlyPrice')} placeholder="68" />
           </label>
+          <div className="field span-all">
+            <span>Picture (optional, shown as a wide banner, about 3:2)</span>
+            {(s.file || s.imageUrl) && (
+              <img className="event-pic" alt="" src={s.preview || s.imageUrl} />
+            )}
+            <div className="row">
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                aria-label={`Picture for session ${i + 1}`}
+                onChange={(e) => {
+                  const file = e.target.files?.[0] ?? null;
+                  setSessions(sessions.map((x, j) => (j === i ? { ...x, file, preview: file ? URL.createObjectURL(file) : '' } : x)));
+                }}
+              />
+              {(s.file || s.imageUrl) && (
+                <button type="button" className="btn btn-sm btn-ghost" onClick={() => setSessions(sessions.map((x, j) => (j === i ? { ...x, file: null, preview: '', imageUrl: '' } : x)))}>
+                  Remove picture
+                </button>
+              )}
+            </div>
+          </div>
         </fieldset>
       ))}
       <div className="span-all">

@@ -19,6 +19,8 @@ interface PublicSession {
   startAt: Timestamp;
   endAt: Timestamp;
   capacity: number | null;
+  /** Banner picture (a Storage download URL). */
+  imageUrl?: string | null;
 }
 
 interface PublicEvent {
@@ -148,6 +150,15 @@ export function EventList() {
               return (
                 <li key={e.id}>
                   <Link to={`/events/${e.id}`} className="ev-card">
+                    {e.sessions.some((s) => s.imageUrl) && (
+                      <span className="ev-card-pics">
+                        {e.sessions
+                          .filter((s) => s.imageUrl)
+                          .map((s) => (
+                            <img key={s.key} src={s.imageUrl!} alt="" loading="lazy" />
+                          ))}
+                      </span>
+                    )}
                     <span className="ev-card-when">
                       {longDayLabel(e.startAt.toDate(), e.timeZone)}
                       <ZoneNote tz={e.timeZone} />
@@ -524,6 +535,7 @@ export function EventPage() {
           <ol className="ev-sessions">
             {sessions.map((s) => (
               <li key={s.key} className="ev-session">
+                {s.imageUrl && <img className="ev-session-pic" src={s.imageUrl} alt="" />}
                 <span className="ev-session-time">{timeRange(s.startAt.toDate(), s.endAt.toDate(), tz)}</span>
                 <h2 className="ev-session-title">{s.title}</h2>
                 {s.summary &&

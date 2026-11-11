@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { connectAuthEmulator, getAuth } from 'firebase/auth';
 import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
 import { connectFunctionsEmulator, getFunctions, httpsCallable } from 'firebase/functions';
+import { connectStorageEmulator, getStorage } from 'firebase/storage';
 
 // In dev everything talks to the local emulators (project demo-lessonkaki). Nothing reaches class-app-sg.
 export const useEmulators = import.meta.env.DEV || import.meta.env.VITE_USE_EMULATORS === 'true';
@@ -23,6 +24,7 @@ const PORTS = {
   auth: port(env.VITE_EMULATOR_AUTH_PORT, 9099),
   firestore: port(env.VITE_EMULATOR_FIRESTORE_PORT, 8080),
   functions: port(env.VITE_EMULATOR_FUNCTIONS_PORT, 5001),
+  storage: port(env.VITE_EMULATOR_STORAGE_PORT, 9199),
 };
 
 export const PROJECT_ID = config.projectId as string;
@@ -32,11 +34,14 @@ export const app = initializeApp(config);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const functions = getFunctions(app, 'asia-southeast1');
+// Event pictures. The bucket follows the project (class-app-sg.firebasestorage.app); the emulator accepts any name.
+export const storage = getStorage(app, `gs://${PROJECT_ID}.firebasestorage.app`);
 
 if (useEmulators) {
   connectAuthEmulator(auth, AUTH_EMULATOR_URL, { disableWarnings: true });
   connectFirestoreEmulator(db, '127.0.0.1', PORTS.firestore);
   connectFunctionsEmulator(functions, '127.0.0.1', PORTS.functions);
+  connectStorageEmulator(storage, '127.0.0.1', PORTS.storage);
 
 }
 

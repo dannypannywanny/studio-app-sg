@@ -579,3 +579,6 @@ body.sheet-open { overflow: hidden; }
 .ledger-details[open] > summary::before { transform: rotate(90deg); }
 .ledger-details > summary h2 { margin: 0; }
 .ledger-details > summary .muted { font-size: var(--text-sm); }
+
+/* Event session picture preview (the learn page shows it as a 3:2 banner). */
+.event-pic { display: block; width: 100%; max-width: 420px; aspect-ratio: 3 / 2; object-fit: cover; border-radius: 12px; margin-bottom: 8px; }

@@ -259,6 +259,24 @@ describe('storage', () => {
     await assertFails(getBytes(ref(env.authenticatedContext('student-a', { r: { [A]: 'student' }, s: { [A]: 'stu1' } }).storage(), `schools/${A}/invoices/inv1.pdf`)));
     await assertFails(uploadString(ref(env.authenticatedContext(`owner-${A}`, { r: { [A]: 'owner' } }).storage(), `schools/${A}/x.pdf`), 'x'));
   });
+
+  it('event pictures: owners and admins upload small images; nobody else, nothing else', async () => {
+    const path = `schools/${A}/events/ev1/session-1.webp`;
+    const store = (uid: string, claims: Record<string, unknown>) => env.authenticatedContext(uid, claims).storage();
+    const img = { contentType: 'image/webp' };
+    await assertSucceeds(uploadString(ref(store(`owner-${A}`, { r: { [A]: 'owner' }, ...TOTP }), path), 'img', 'raw', img));
+    await assertSucceeds(getBytes(ref(store('admin-a', { r: { [A]: 'admin' }, ...TOTP }), path)));
+    await assertSucceeds(uploadString(ref(store('admin-a', { r: { [A]: 'admin' }, ...TOTP }), path), 'img', 'raw', img));
+    // No second factor, other roles, other schools, the public: refused.
+    await assertFails(uploadString(ref(store(`owner-${A}`, { r: { [A]: 'owner' } }), path), 'img', 'raw', img));
+    await assertFails(uploadString(ref(store('teacher-a', { r: { [A]: 'teacher' }, t: { [A]: 't1' }, ...TOTP }), path), 'img', 'raw', img));
+    await assertFails(uploadString(ref(store('student-a', { r: { [A]: 'student' }, s: { [A]: 'stu1' } }), path), 'img', 'raw', img));
+    await assertFails(uploadString(ref(store('owner-b', { r: { B: 'owner' }, ...TOTP }), path), 'img', 'raw', img));
+    await assertFails(getBytes(ref(env.unauthenticatedContext().storage(), path)));
+    // Not an image, or too big.
+    await assertFails(uploadString(ref(store(`owner-${A}`, { r: { [A]: 'owner' }, ...TOTP }), `schools/${A}/events/ev1/x.pdf`), 'x', 'raw', { contentType: 'application/pdf' }));
+    await assertFails(uploadString(ref(store(`owner-${A}`, { r: { [A]: 'owner' }, ...TOTP }), path), 'x'.repeat(5 * 1024 * 1024 + 1), 'raw', img));
+  });
 });
 
 describe('staff second factor', () => {
