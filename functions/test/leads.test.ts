@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getAuth } from 'firebase-admin/auth';
-import { addAttendee, removeAttendee, setAttendance } from '../src/attendance';
+import { addAttendee, cancelAttendance, removeAttendee, setAttendance, setAttendeePackage } from '../src/attendance';
 import { inviteStudents } from '../src/invites';
 import { createLesson } from '../src/lessons';
 import { createSeries } from '../src/series';
@@ -37,6 +37,32 @@ const trial = (t: TestSchool, studentIds: string[], hours = -24) =>
     owner,
   ).then((r) => r.lessonId);
 
+const trialPackage = (t: TestSchool) =>
+  db.doc(`schools/${t.schoolId}/packages/trial`).set({
+    name: 'Trial lesson',
+    sessions: 1,
+    priceCents: 3000,
+    validityDays: 30,
+    kind: 'trial',
+    oncePerStudent: true,
+    active: true,
+  });
+const studentTrial = (t: TestSchool, studentId: string, hours = -24) =>
+  createLesson(
+    db,
+    {
+      schoolId: t.schoolId,
+      teacherId: t.teacherId,
+      subjectId: t.subjectId,
+      startAt: new Date(Date.now() + hours * HOUR + slot++ * 61 * 60_000),
+      durationMin: 30,
+      studentIds: [studentId],
+      isOnline: false,
+      trialStudentIds: [studentId],
+    },
+    owner,
+  ).then((r) => r.lessonId);
+
 const stageOf = async (t: TestSchool, id: string) => (await db.doc(`schools/${t.schoolId}/students/${id}`).get()).get('lead.stage');
 const mark = (t: TestSchool, lessonId: string, studentId: string, status: 'present' | 'absent' | 'booked') =>
   setAttendance(db, { schoolId: t.schoolId, lessonId, studentId, status }, owner);
@@ -64,20 +90,45 @@ describe('trial lessons for leads', () => {
   it('a lead who bought a trial package uses that credit', async () => {
     const t = await school();
     const lead = await addLead(t);
-    await db.doc(`schools/${t.schoolId}/packages/trial`).set({
-      name: 'Trial lesson',
-      sessions: 1,
-      priceCents: 3000,
-      validityDays: 30,
-      kind: 'trial',
-      oncePerStudent: true,
-      active: true,
-    });
+    await trialPackage(t);
     await sell(t, 'trial', new Date(Date.now() - 3 * 24 * HOUR), undefined, lead);
     const id = await trial(t, [lead]);
     expect((await mark(t, id, lead, 'present')).charge).toBe('debited');
     expect(await summary(t, lead)).toEqual({ sessionsAvailable: 0, sessionsOwed: 0 });
     expect((await mark(t, id, lead, 'booked')).charge).toBe('restored');
+  });
+
+  it("a trial never takes a credit from a regular package: it's free", async () => {
+    const t = await school();
+    const lead = await addLead(t);
+    await sell(t, t.pkg30, new Date(Date.now() - 3 * 24 * HOUR), undefined, lead);
+    const id = await trial(t, [lead]);
+    expect((await mark(t, id, lead, 'present')).charge).toBe('none');
+    expect(await summary(t, lead)).toEqual({ sessionsAvailable: 4, sessionsOwed: 0 });
+  });
+
+  it('a student can come for a trial too: free, or paid by their trial package, never their regular one', async () => {
+    const t = await school();
+    await trialPackage(t);
+    await sell(t, t.pkg30, new Date(Date.now() - 3 * 24 * HOUR));
+    const free = await studentTrial(t, t.studentId);
+    expect((await lessonDoc(t, free)).trialStudentIds).toEqual([t.studentId]);
+    expect(await attendee(t, free, t.studentId)).toMatchObject({ trial: true });
+    expect((await mark(t, free, t.studentId, 'present')).charge).toBe('none');
+    expect(await summary(t, t.studentId)).toEqual({ sessionsAvailable: 4, sessionsOwed: 0 });
+
+    // Paid trial: the trial package is sold and pinned to the lesson, as the booking form does.
+    const paid = await studentTrial(t, t.studentId);
+    const sold = await sell(t, 'trial', new Date(Date.now() - 2 * 24 * HOUR));
+    await setAttendeePackage(db, { schoolId: t.schoolId, lessonId: paid, studentId: t.studentId, enrolmentId: sold.enrolmentId }, owner);
+    expect((await mark(t, paid, t.studentId, 'present')).charge).toBe('debited');
+    expect(await attendee(t, paid, t.studentId)).toMatchObject({ enrolmentId: sold.enrolmentId });
+    expect(await summary(t, t.studentId)).toEqual({ sessionsAvailable: 4, sessionsOwed: 0 });
+
+    // Their ordinary lessons still use the regular package.
+    const regular = await trial(t, [t.studentId]);
+    expect((await mark(t, regular, t.studentId, 'present')).charge).toBe('debited');
+    expect(await summary(t, t.studentId)).toEqual({ sessionsAvailable: 3, sessionsOwed: 0 });
   });
 
   it('students on the same lesson are charged as usual', async () => {
@@ -143,5 +194,18 @@ describe('trial lessons for leads', () => {
     const lead = await addLead(t);
     const [r] = await inviteStudents(db, getAuth(), { schoolId: t.schoolId, studentIds: [lead] }, owner);
     expect(r).toMatchObject({ outcome: 'lead' });
+  });
+});
+
+describe('cancelled lessons free their time', () => {
+  it('staff can book the time of a lesson everyone cancelled', async () => {
+    const t = await school();
+    const at = new Date(Date.now() + 72 * HOUR);
+    const shape = { schoolId: t.schoolId, teacherId: t.teacherId, subjectId: t.subjectId, startAt: at, durationMin: 45, isOnline: false };
+    const { lessonId } = await createLesson(db, { ...shape, studentIds: [t.studentId] }, owner);
+    await expect(createLesson(db, { ...shape, studentIds: [t.studentId] }, owner)).rejects.toThrow(/already has a lesson/);
+    await cancelAttendance(db, { schoolId: t.schoolId, lessonId, studentId: t.studentId }, owner);
+    expect((await lessonDoc(t, lessonId)).studentsCancelled).toBe(true);
+    await expect(createLesson(db, { ...shape, studentIds: [t.studentId] }, owner)).resolves.toHaveProperty('lessonId');
   });
 });

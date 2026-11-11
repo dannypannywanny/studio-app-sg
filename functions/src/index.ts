@@ -97,6 +97,7 @@ const CreateLesson = z.object({
   isOnline: z.boolean(),
   locationId: id.nullish(),
   meetingUrl: z.url().nullish(),
+  trialStudentIds: z.array(id).max(50).optional(),
 });
 
 export const createLesson = onCall(async (req) => {

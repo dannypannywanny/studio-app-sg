@@ -5,7 +5,7 @@ import { addDays, wallClockToUtc, wallTimeOf } from '@lessonkaki/shared';
 import { db } from '../firebase';
 import { studentName, useQuery, useStudents, useTimeZone, lessonStudents } from '../hooks';
 import { useSchoolId, useSession } from '../session';
-import type { Lesson } from '../types';
+import { isLessonCancelled, type Lesson } from '../types';
 import { useRooms } from './Rooms';
 import { useHolidays } from './Holidays';
 import { offLabel, timeOffRange, useTimeOff } from './TimeOff';
@@ -55,7 +55,7 @@ export function ConflictBanner({
   const clashes = lessons.data.filter(
     (l) =>
       l.id !== ignoreLessonId &&
-      l.status !== 'cancelled' &&
+      !isLessonCancelled(l) &&
       l.startAt.toMillis() < end &&
       l.endAt.toMillis() > start &&
       (l.teacherId === teacherId || (roomId !== null && !l.isOnline && l.locationId === roomId)),

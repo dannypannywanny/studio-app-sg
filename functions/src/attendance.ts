@@ -71,9 +71,12 @@ export async function prepareTransition(
   const wantsCharge = consumesCredit(to, policy);
   if (wantsCharge && !holdsCharge) {
     const preferred = (attendee.get('preferredEnrolmentId') as string | null | undefined) ?? null;
-    const lot = pickLot(await readActiveLots(ct, attendee.id), lessonStart.toMillis(), preferred);
-    // A trial with no package to pay for it is free: nothing taken, nothing owed.
-    if (!lot && attendee.get('trial') === true) return { action: 'none', lot: null };
+    const trial = attendee.get('trial') === true;
+    const lots = await readActiveLots(ct, attendee.id);
+    // A trial is paid only by a trial package (or the package staff picked for it), never by lessons
+    // the student bought; with none it's free: nothing taken, nothing owed.
+    const lot = pickLot(trial ? await trialLots(ct, lots, preferred) : lots, lessonStart.toMillis(), preferred);
+    if (!lot && trial) return { action: 'none', lot: null };
     if (!lot && !policy.allowOwedLessons) {
       throw new HttpsError('failed-precondition', 'This student has no credits left');
     }
@@ -87,6 +90,14 @@ export async function prepareTransition(
     return { action: 'restore', lot: ct.useLot(snap) };
   }
   return { action: 'none', lot: null };
+}
+
+/** The lots that may pay for a trial: those sold from a trial package, plus the one staff chose. */
+async function trialLots(ct: CreditTx, lots: LotState[], preferred: string | null): Promise<LotState[]> {
+  const ids = [...new Set(lots.flatMap((l) => (l.packageId ? [l.packageId] : [])))];
+  const pkgs = ids.length ? await ct.tx.getAll(...ids.map((id) => ct.school.collection('packages').doc(id))) : [];
+  const trialPkgs = new Set(pkgs.filter((p) => p.get('kind') === 'trial').map((p) => p.id));
+  return lots.filter((l) => l.id === preferred || (l.packageId !== null && trialPkgs.has(l.packageId)));
 }
 
 export interface Applied {
@@ -320,7 +331,7 @@ export interface AttendeeInput {
   studentId: string;
 }
 
-/** `trial`: a lead's trial lesson (free unless they have a package for it). */
+/** `trial`: a trial lesson (free unless a trial package pays for it). */
 export function newAttendeeDoc(schoolId: string, lessonId: string, studentId: string, startAt: Timestamp, source = 'admin', trial = false) {
   return {
     ...(trial ? { trial: true } : {}),
