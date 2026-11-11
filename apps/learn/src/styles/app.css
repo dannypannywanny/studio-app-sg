@@ -102,6 +102,9 @@ button { font: inherit; color: inherit; }
 .notice-info { background: var(--tan-soft); color: var(--ink); }
 .field-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
 .field input { width: 100%; min-width: 0; }
+.auth-events { width: min(100%, 440px); }
+.auth-events > * + * { margin-top: 12px; }
+.auth-events h2 { font-size: 1.15rem; }
 .auth-foot { color: var(--ink-2); font-size: 0.9rem; text-align: center; }
 .sent-mark { width: 56px; height: 56px; border-radius: var(--r-pill); display: grid; place-items: center; background: var(--tan-soft); color: var(--ink); }
 .skeleton-line { height: 14px; width: 60%; border-radius: var(--r-label); background: var(--surface); margin-top: 20px; }
@@ -126,7 +129,7 @@ button { font: inherit; color: inherit; }
 
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: var(--z-bar);
-  display: grid; grid-template-columns: repeat(3, 1fr);
+  display: grid; grid-template-columns: repeat(4, 1fr);
   height: calc(var(--tabbar-h) + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom);
   background: color-mix(in oklab, var(--bg) 92%, transparent);
   -webkit-backdrop-filter: saturate(1.4) blur(12px); backdrop-filter: saturate(1.4) blur(12px);

@@ -10,6 +10,7 @@ import { DEFAULT_MAX_PER_ORDER, currentTier, formatMoney, laterPrice, optionSeat
 import { call, db, errorMessage } from '../firebase';
 import { longDayLabel, timeLabel, timeRange, zoneName } from '../format';
 import { logoSrc, useDoc, useProfile, useQuery, useSiteSchoolId } from '../hooks';
+import { useSession } from '../session';
 import { DIAL_CODES } from './SignIn';
 
 interface PublicSession {
@@ -67,6 +68,7 @@ function PublicShell({ children }: { children: ReactNode }) {
   const site = useSiteSchoolId();
   const profile = useProfile(site.schoolId);
   const logo = logoSrc(profile.data);
+  const { user } = useSession();
   return (
     <div className="shell">
       <a className="skip-link" href="#main">
@@ -78,7 +80,7 @@ function PublicShell({ children }: { children: ReactNode }) {
             {logo ? <img src={logo} alt="" height={38} /> : <span className="brand-name">{profile.data?.name}</span>}
           </NavLink>
           <Link className="btn btn-sm btn-quiet" to="/">
-            Student login
+            {user ? 'My lessons' : 'Student login'}
           </Link>
         </div>
       </header>
@@ -119,15 +121,70 @@ function fromPrice(e: PublicEvent, now: Date): number | null {
 // /events
 // ---------------------------------------------------------------------------------------------
 
-export function EventList() {
-  const site = useSiteSchoolId();
-  const events = useQuery<PublicEvent>(site.schoolId ? `pubEvents:${site.schoolId}` : null, () =>
-    query(collection(db, 'schools', site.schoolId!, 'events'), where('published', '==', true)),
+/** The school's published events that haven't ended yet, soonest first. */
+export function useUpcomingEvents(schoolId: string | null) {
+  const events = useQuery<PublicEvent>(schoolId ? `pubEvents:${schoolId}` : null, () =>
+    query(collection(db, 'schools', schoolId!, 'events'), where('published', '==', true)),
   );
   const [now] = useState(() => new Date());
   const upcoming = events.data
     .filter((e) => e.status !== 'cancelled' && e.endAt.toMillis() > now.getTime())
     .sort((a, b) => a.startAt.toMillis() - b.startAt.toMillis());
+  return { upcoming, loading: events.loading, now };
+}
+
+/** Event cards linking to each event's page: pictures, date, sessions and the lowest price on sale. */
+export function EventCards({ events, now }: { events: (PublicEvent & { id: string })[]; now: Date }) {
+  return (
+    <ul className="ev-list">
+      {events.map((e) => {
+        const from = fromPrice(e, now);
+        return (
+          <li key={e.id}>
+            <Link to={`/events/${e.id}`} className="ev-card">
+              {e.sessions.some((s) => s.imageUrl) && (
+                <span className="ev-card-pics">
+                  {e.sessions
+                    .filter((s) => s.imageUrl)
+                    .map((s) => (
+                      <img key={s.key} src={s.imageUrl!} alt="" loading="lazy" />
+                    ))}
+                </span>
+              )}
+              <span className="ev-card-when">
+                {longDayLabel(e.startAt.toDate(), e.timeZone)}
+                <ZoneNote tz={e.timeZone} />
+              </span>
+              <span className="ev-card-title">{e.title}</span>
+              {e.tagline && <span className="ev-card-tag">{e.tagline}</span>}
+              {e.sessions.length > 1 && (
+                <ul className="ev-card-sessions">
+                  {e.sessions.map((s) => (
+                    <li key={s.key}>
+                      <span className="ev-time">{timeLabel(s.startAt.toDate(), e.timeZone)}</span> {s.title}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <span className="ev-card-foot">
+                {from !== null ? <span className="ev-from">From {formatMoney(from, e.currency)}</span> : <span className="tag tag-muted">Sold out</span>}
+                {from !== null && (
+                  <span className="text-link">
+                    Get tickets <ArrowRight size={16} weight="bold" aria-hidden="true" />
+                  </span>
+                )}
+              </span>
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+export function EventList() {
+  const site = useSiteSchoolId();
+  const { upcoming, loading, now } = useUpcomingEvents(site.schoolId);
 
   return (
     <PublicShell>
@@ -136,7 +193,7 @@ export function EventList() {
           <h1>Events</h1>
           <p className="lede">Workshops and masterclasses. Anyone can join: no lessons or account needed.</p>
         </header>
-        {site.loading || events.loading ? (
+        {site.loading || loading ? (
           <div className="skeleton skeleton-hero" aria-busy="true" />
         ) : upcoming.length === 0 ? (
           <article className="empty">
@@ -144,49 +201,7 @@ export function EventList() {
             <p>New events are announced here first. Check back soon.</p>
           </article>
         ) : (
-          <ul className="ev-list">
-            {upcoming.map((e) => {
-              const from = fromPrice(e, now);
-              return (
-                <li key={e.id}>
-                  <Link to={`/events/${e.id}`} className="ev-card">
-                    {e.sessions.some((s) => s.imageUrl) && (
-                      <span className="ev-card-pics">
-                        {e.sessions
-                          .filter((s) => s.imageUrl)
-                          .map((s) => (
-                            <img key={s.key} src={s.imageUrl!} alt="" loading="lazy" />
-                          ))}
-                      </span>
-                    )}
-                    <span className="ev-card-when">
-                      {longDayLabel(e.startAt.toDate(), e.timeZone)}
-                      <ZoneNote tz={e.timeZone} />
-                    </span>
-                    <span className="ev-card-title">{e.title}</span>
-                    {e.tagline && <span className="ev-card-tag">{e.tagline}</span>}
-                    {e.sessions.length > 1 && (
-                      <ul className="ev-card-sessions">
-                        {e.sessions.map((s) => (
-                          <li key={s.key}>
-                            <span className="ev-time">{timeLabel(s.startAt.toDate(), e.timeZone)}</span> {s.title}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    <span className="ev-card-foot">
-                      {from !== null ? <span className="ev-from">From {formatMoney(from, e.currency)}</span> : <span className="tag tag-muted">Sold out</span>}
-                      {from !== null && (
-                        <span className="text-link">
-                          Get tickets <ArrowRight size={16} weight="bold" aria-hidden="true" />
-                        </span>
-                      )}
-                    </span>
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
+          <EventCards events={upcoming} now={now} />
         )}
       </div>
     </PublicShell>

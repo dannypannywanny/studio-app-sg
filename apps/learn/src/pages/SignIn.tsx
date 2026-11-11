@@ -6,6 +6,7 @@ import { AuthShell } from '../components/AuthShell';
 import { AUTH_EMULATOR_URL, PROJECT_ID, auth, call, errorMessage, useEmulators } from '../firebase';
 import { useProfile, useSiteSchoolId } from '../hooks';
 import { useSession } from '../session';
+import { EventCards, useUpcomingEvents } from './Events';
 
 export const EMAIL_KEY = 'lk.learn.emailForSignIn';
 export const NEXT_KEY = 'lk.learn.next';
@@ -67,6 +68,7 @@ export function SignIn() {
   const [form, setForm] = useState({ firstName: '', lastName: '', dial: '+65', phone: '', consent: false });
   const [exists, setExists] = useState(false);
   const site = useSiteSchoolId();
+  const events = useUpcomingEvents(site.schoolId);
   const profile = useProfile(site.schoolId);
   const [code, setCode] = useState('');
   const navigate = useNavigate();
@@ -271,7 +273,18 @@ export function SignIn() {
   }
 
   return (
-    <AuthShell showNotice>
+    <AuthShell
+      showNotice
+      after={
+        events.upcoming.length > 0 && (
+          <section className="auth-events" aria-labelledby="auth-events-h">
+            <h2 id="auth-events-h">Upcoming events</h2>
+            <p className="meta">Open to everyone: no account needed.</p>
+            <EventCards events={events.upcoming} now={events.now} />
+          </section>
+        )
+      }
+    >
       <h1>Your lessons, in one place</h1>
       <p className="lede">Book, check and cancel lessons, and see your sessions and invoices.</p>
       <form onSubmit={submit} className="form">

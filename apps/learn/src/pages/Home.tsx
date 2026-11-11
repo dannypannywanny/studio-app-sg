@@ -4,6 +4,7 @@ import { Link } from 'react-router';
 import { formatMoney } from '@lessonkaki/shared';
 import { HistoryRow, NextLesson, UpcomingRow, type LessonContext } from '../components/LessonCard';
 import { dayLabel, otherZone, zoneName } from '../format';
+import { EventCards, useUpcomingEvents } from './Events';
 import { firstName, useEnrolments, useInvoices, useMyLessons, useProfile, useSchool, useStudent } from '../hooks';
 import { useStudentIds } from '../session';
 
@@ -28,6 +29,7 @@ export function Home() {
   const lessons = useMyLessons();
   const enrolments = useEnrolments();
   const invoices = useInvoices();
+  const events = useUpcomingEvents(schoolId);
   const tz = school.timeZone;
 
   const { upcoming, history } = useMemo(() => {
@@ -122,6 +124,18 @@ export function Home() {
           ) : (
             <p className="meta">Nothing else booked yet.</p>
           )}
+        </section>
+      )}
+
+      {events.upcoming.length > 0 && (
+        <section className="section">
+          <div className="section-head">
+            <h2>Events</h2>
+            <Link className="text-link" to="/events">
+              See all
+            </Link>
+          </div>
+          <EventCards events={events.upcoming} now={events.now} />
         </section>
       )}
 

@@ -1,8 +1,18 @@
 import type { ReactNode } from 'react';
 import { logoSrc, useProfile, useSiteSchoolId } from '../hooks';
 
-/** The signed-out frame: the school's logo over a single card. */
-export function AuthShell({ children, schoolId: given, showNotice = false }: { children: ReactNode; schoolId?: string | null; showNotice?: boolean }) {
+/** The signed-out frame: the school's logo over a single card, then anything in `after`. */
+export function AuthShell({
+  children,
+  schoolId: given,
+  showNotice = false,
+  after,
+}: {
+  children: ReactNode;
+  schoolId?: string | null;
+  showNotice?: boolean;
+  after?: ReactNode;
+}) {
   const site = useSiteSchoolId();
   const profile = useProfile(given ?? site.schoolId);
   const logo = logoSrc(profile.data);
@@ -17,6 +27,7 @@ export function AuthShell({ children, schoolId: given, showNotice = false }: { c
         </p>
       )}
       <section className="auth-card">{children}</section>
+      {after}
       {profile.data?.contactEmail && (
         <p className="auth-foot">
           Trouble signing in? Email <a href={`mailto:${profile.data.contactEmail}`}>{profile.data.contactEmail}</a>

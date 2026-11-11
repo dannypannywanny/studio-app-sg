@@ -1,4 +1,4 @@
-import { CalendarPlus, House, Receipt, SignOut } from '@phosphor-icons/react';
+import { CalendarPlus, House, Receipt, SignOut, Ticket } from '@phosphor-icons/react';
 import { NavLink, Outlet } from 'react-router';
 import { auth } from './firebase';
 import { logoSrc, useProfile } from './hooks';
@@ -7,6 +7,7 @@ import { useStudentIds } from './session';
 const TABS = [
   { to: '/', label: 'Home', icon: House, end: true },
   { to: '/book', label: 'Book', icon: CalendarPlus, end: false },
+  { to: '/events', label: 'Events', icon: Ticket, end: false },
   { to: '/payments', label: 'Payments', icon: Receipt, end: false },
 ] as const;
 
