@@ -41,17 +41,16 @@ interface PublicEvent {
   soldBySession?: Record<string, number>;
 }
 
-interface CheckoutIn {
+interface Ticket {
   eventId: string;
   optionKey: string;
   qty: number;
-  firstName: string;
-  lastName: string;
-  email: string;
-  phone: string;
-  consent: true;
   marketing: boolean;
 }
+/** A guest gives their details; a signed-in student's come from their record (a phone only if it has none). */
+type CheckoutIn =
+  | (Ticket & { firstName: string; lastName: string; email: string; phone: string; consent: true })
+  | (Ticket & { asStudent: true; phone?: string });
 interface OrderState {
   status: string;
   qty: number;
@@ -333,6 +332,21 @@ function TicketForm({ eventId, e, privacyUrl }: { eventId: string; e: PublicEven
   const max = Math.max(1, Math.min(e.maxPerOrder ?? DEFAULT_MAX_PER_ORDER, left ?? Infinity));
   const [qty, setQty] = useState(1);
   const [form, setForm] = useState({ firstName: '', lastName: '', email: '', dial: '+65', phone: '', consent: false, marketing: false });
+  // Students of this school can buy with their account; anyone else buys as a guest.
+  const site = useSiteSchoolId();
+  const session = useSession();
+  const studentHere = !!session.studentId && session.schoolId === site.schoolId;
+  const student = useDoc<{ firstName?: string; lastName?: string; preferredName?: string | null; email?: string; phone?: string | null }>(
+    studentHere ? `schools/${session.schoolId}/students/${session.studentId}` : null,
+  );
+  const [who, setWho] = useState<'student' | 'guest'>(() => (studentHere ? 'student' : 'guest'));
+  // The session can arrive after the first render: switch to the student's own path once it does.
+  useEffect(() => {
+    if (studentHere) setWho('student');
+  }, [studentHere]);
+  const asStudent = who === 'student' && studentHere;
+  const signInFirst = who === 'student' && !studentHere;
+  const needsPhone = !asStudent || (!student.loading && !student.data?.phone);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const on = option ? currentTier(option.prices, now, e.timeZone) : null;
@@ -345,17 +359,13 @@ function TicketForm({ eventId, e, privacyUrl }: { eventId: string; e: PublicEven
     setBusy(true);
     setError(null);
     try {
-      const { url } = await startEventCheckout({
-        eventId,
-        optionKey: option.key,
-        qty: n,
-        firstName: form.firstName,
-        lastName: form.lastName,
-        email: form.email.trim(),
-        phone: `${form.dial} ${form.phone.replace(/^0+/, '')}`,
-        consent: true,
-        marketing: form.marketing,
-      });
+      const ticket = { eventId, optionKey: option.key, qty: n, marketing: form.marketing };
+      const phone = `${form.dial} ${form.phone.replace(/^0+/, '')}`;
+      const { url } = await startEventCheckout(
+        asStudent
+          ? { ...ticket, asStudent: true, ...(needsPhone ? { phone } : {}) }
+          : { ...ticket, firstName: form.firstName, lastName: form.lastName, email: form.email.trim(), phone, consent: true },
+      );
       window.location.assign(url); // HitPay; it returns to /events/:id?order=…
     } catch (err) {
       setError(errorMessage(err));
@@ -387,58 +397,107 @@ function TicketForm({ eventId, e, privacyUrl }: { eventId: string; e: PublicEven
           </div>
         </div>
       )}
-      <div className="field-row">
-        <label className="field">
-          <span className="field-label">First name</span>
-          <input required autoComplete="given-name" value={form.firstName} onChange={(x) => setForm({ ...form, firstName: x.target.value })} />
-        </label>
-        <label className="field">
-          <span className="field-label">Last name</span>
-          <input autoComplete="family-name" value={form.lastName} onChange={(x) => setForm({ ...form, lastName: x.target.value })} />
-        </label>
-      </div>
-      <label className="field">
-        <span className="field-label">Email</span>
-        <input type="email" required autoComplete="email" inputMode="email" value={form.email} onChange={(x) => setForm({ ...form, email: x.target.value })} />
-        <span className="field-help">Your confirmation goes here.</span>
-      </label>
-      <label className="field">
-        <span className="field-label">Mobile</span>
-        <div className="phone-row">
-          <select aria-label="Country code" value={form.dial} onChange={(x) => setForm({ ...form, dial: x.target.value })}>
-            {DIAL_CODES.map(([code, name]) => (
-              <option key={code} value={code}>
-                {name} {code}
-              </option>
-            ))}
-          </select>
-          <input type="tel" required autoComplete="tel-national" inputMode="tel" value={form.phone} onChange={(x) => setForm({ ...form, phone: x.target.value })} />
-        </div>
-        <span className="field-help">In case anything about the event changes.</span>
-      </label>
-      <label className="check">
-        <input type="checkbox" required checked={form.consent} onChange={(x) => setForm({ ...form, consent: x.target.checked })} />
-        <span>
-          I agree to the{' '}
-          {privacyUrl ? (
-            <a href={privacyUrl} target="_blank" rel="noreferrer">
-              privacy notice
-            </a>
-          ) : (
-            'privacy notice'
-          )}
-          : the studio keeps my details to run this event and my booking.
+      <div className="field">
+        <span className="field-label" id="who-label">
+          Buying as
         </span>
-      </label>
-      <label className="check">
-        <input type="checkbox" checked={form.marketing} onChange={(x) => setForm({ ...form, marketing: x.target.checked })} />
-        <span>Tell me about future events (optional).</span>
-      </label>
-      <button className="btn btn-block" disabled={busy || !on}>
-        {busy ? 'Opening payment' : on ? `Pay ${formatMoney(on.tier.priceCents * n, e.currency)}` : 'Pick a ticket'}
-        {!busy && on && <ArrowRight size={18} weight="bold" aria-hidden="true" />}
-      </button>
-      <p className="meta">Card, PayNow and more, through HitPay.</p>
+        <div className="segmented" role="radiogroup" aria-labelledby="who-label">
+          <button type="button" role="radio" aria-checked={who === 'student'} onClick={() => setWho('student')}>
+            A student here
+          </button>
+          <button type="button" role="radio" aria-checked={who === 'guest'} onClick={() => setWho('guest')}>
+            A guest
+          </button>
+        </div>
+      </div>
+      {signInFirst ? (
+        <div className="ev-signin">
+          <p>Sign in and your tickets go on your student account, with no details to type.</p>
+          <Link className="btn btn-quiet btn-block" to={`/sign-in?next=${encodeURIComponent(`/events/${eventId}`)}`}>
+            Sign in to buy
+            <ArrowRight size={18} weight="bold" aria-hidden="true" />
+          </Link>
+        </div>
+      ) : asStudent ? (
+        <p className="ev-buyer">
+          {student.data ? (
+            <>
+              <strong>{[student.data.preferredName || student.data.firstName, student.data.lastName].filter(Boolean).join(' ')}</strong>
+              <span className="meta">{student.data.email}</span>
+            </>
+          ) : (
+            <span className="meta">Loading your details</span>
+          )}
+          <span className="meta">Your confirmation goes to this email, and the receipt is under Payments.</span>
+        </p>
+      ) : (
+        <>
+          <div className="field-row">
+            <label className="field">
+              <span className="field-label">First name</span>
+              <input required autoComplete="given-name" value={form.firstName} onChange={(x) => setForm({ ...form, firstName: x.target.value })} />
+            </label>
+            <label className="field">
+              <span className="field-label">Last name</span>
+              <input autoComplete="family-name" value={form.lastName} onChange={(x) => setForm({ ...form, lastName: x.target.value })} />
+            </label>
+          </div>
+          <label className="field">
+            <span className="field-label">Email</span>
+            <input type="email" required autoComplete="email" inputMode="email" value={form.email} onChange={(x) => setForm({ ...form, email: x.target.value })} />
+            <span className="field-help">Your confirmation goes here.</span>
+          </label>
+        </>
+      )}
+      {!signInFirst && needsPhone && (
+        <>
+          <label className="field">
+            <span className="field-label">Mobile</span>
+            <div className="phone-row">
+              <select aria-label="Country code" value={form.dial} onChange={(x) => setForm({ ...form, dial: x.target.value })}>
+                {DIAL_CODES.map(([code, name]) => (
+                  <option key={code} value={code}>
+                    {name} {code}
+                  </option>
+                ))}
+              </select>
+              <input type="tel" required autoComplete="tel-national" inputMode="tel" value={form.phone} onChange={(x) => setForm({ ...form, phone: x.target.value })} />
+            </div>
+            <span className="field-help">In case anything about the event changes.</span>
+          </label>
+        </>
+      )}
+      {who === 'guest' && (
+        <>
+          <label className="check">
+            <input type="checkbox" required checked={form.consent} onChange={(x) => setForm({ ...form, consent: x.target.checked })} />
+            <span>
+              I agree to the{' '}
+              {privacyUrl ? (
+                <a href={privacyUrl} target="_blank" rel="noreferrer">
+                  privacy notice
+                </a>
+              ) : (
+                'privacy notice'
+              )}
+              : the studio keeps my details to run this event and my booking.
+            </span>
+          </label>
+        </>
+      )}
+      {!signInFirst && (
+        <>
+          <label className="check">
+            <input type="checkbox" checked={form.marketing} onChange={(x) => setForm({ ...form, marketing: x.target.checked })} />
+            <span>Tell me about future events (optional).</span>
+          </label>
+          <button className="btn btn-block" disabled={busy || !on}>
+            {busy ? 'Opening payment' : on ? `Pay ${formatMoney(on.tier.priceCents * n, e.currency)}` : 'Pick a ticket'}
+            {!busy && on && <ArrowRight size={18} weight="bold" aria-hidden="true" />}
+          </button>
+          <p className="meta">Card, PayNow and more, through HitPay.</p>
+        </>
+      )}
       {error && (
         <p className="form-error" role="alert">
           {error}

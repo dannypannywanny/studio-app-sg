@@ -170,6 +170,40 @@ describe('paying for tickets', () => {
     expect(order.studentId).toBe(t.studentId);
     expect((await db.collection(`schools/${t.schoolId}/students`).get()).size).toBe(1);
   });
+
+  it('a signed-in student buys with the details on their record, and the tickets go on their account', async () => {
+    const { t, host } = await setup();
+    const student = db.doc(`schools/${t.schoolId}/students/${t.studentId}`);
+    await student.update({ firstName: 'Ben', lastName: 'Tan', preferredName: null, email: 'ben@example.test', phone: '+6591112222', summary: { sessionsAvailable: 0, sessionsOwed: 0, outstandingCents: 0, moneyCreditCents: 0 } });
+    // Another record shares the guest email the page might still hold: it must not get the order.
+    await db.collection(`schools/${t.schoolId}/students`).add({ firstName: 'Ada', email: 'ada@example.test', status: 'active' });
+    const client = new FakeHitPay();
+    const asStudent = buyer(host, { firstName: '', lastName: '', email: '', phone: '', consent: false, qty: 1, studentId: t.studentId });
+    const { checkoutId } = await startEventCheckout(db, client, asStudent, EARLY);
+    expect(client.requests[0]).toMatchObject({ email: 'ben@example.test', name: 'Ben Tan' });
+    const pending = (await db.doc(`schools/${t.schoolId}/checkouts/${checkoutId}`).get()).data()!;
+    expect(pending).toMatchObject({ studentId: t.studentId, createdBy: 'student', consentAt: null, buyer: { email: 'ben@example.test', phone: '+6591112222' } });
+
+    const b = paid(t, checkoutId, '68.00');
+    expect(await handleHitPayWebhook(db, keys(t), b, sign(b), EARLY)).toBe('paid');
+    const order = (await db.doc(`schools/${t.schoolId}/checkouts/${checkoutId}`).get()).data()!;
+    expect(order.studentId).toBe(t.studentId);
+    const invoice = (await db.doc(`schools/${t.schoolId}/invoices/${order.invoiceId}`).get()).data()!;
+    expect(invoice).toMatchObject({ studentId: t.studentId, status: 'paid' });
+    expect(await money(t, t.studentId)).toEqual({ outstandingCents: 0, moneyCreditCents: 0 });
+  });
+
+  it('a signed-in student without a phone on file gives one; an archived student cannot buy as a student', async () => {
+    const { t, host } = await setup();
+    const student = db.doc(`schools/${t.schoolId}/students/${t.studentId}`);
+    await student.update({ email: 'ben@example.test', phone: null });
+    const asStudent = (phone: string) => buyer(host, { firstName: '', lastName: '', email: '', phone, consent: false, qty: 1, studentId: t.studentId });
+    await expect(startEventCheckout(db, new FakeHitPay(), asStudent(''), EARLY)).rejects.toThrow(/phone number/);
+    const { checkoutId } = await startEventCheckout(db, new FakeHitPay(), asStudent('9123 4567'), EARLY);
+    expect((await db.doc(`schools/${t.schoolId}/checkouts/${checkoutId}`).get()).get('buyer.phone')).toBe('+6591234567');
+    await student.update({ status: 'archived' });
+    await expect(startEventCheckout(db, new FakeHitPay(), asStudent('9123 4567'), EARLY)).rejects.toThrow(/not active/);
+  });
 });
 
 describe('booking around events', () => {

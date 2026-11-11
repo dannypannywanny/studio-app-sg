@@ -9,7 +9,7 @@
 // tickets and emails a confirmation. Every step is idempotent, so HitPay's retries never double-sell.
 //
 // The event's time also blocks lesson booking for its hosts (eventsHeld, used by booking.ts).
-import { FieldValue, Timestamp, type DocumentReference, type Firestore, type Query, type QuerySnapshot } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp, type DocumentReference, type DocumentSnapshot, type Firestore, type Query, type QuerySnapshot } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
 import {
   DEFAULT_MAX_PER_ORDER,
@@ -59,6 +59,11 @@ export interface StartEventCheckoutInput {
   marketing: boolean;
   /** Learn site hostname: decides the school and where HitPay sends the buyer back. */
   host: string;
+  /**
+   * Buying as a signed-in student (claims.s for the site's school): name, email and phone come from
+   * their record, the order is theirs from the start, and the privacy notice was agreed at sign-up.
+   */
+  studentId?: string | null;
 }
 
 /** Seats taken in one session: paid orders, plus unpaid ones still inside their hold. */
@@ -71,20 +76,55 @@ function seatsTaken(orders: QuerySnapshot, sessionKey: string, atMs: number): nu
   }, 0);
 }
 
+interface Buyer {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  marketing: boolean;
+}
+
+/** A guest types their details and agrees to the privacy notice. */
+function checkGuest(input: StartEventCheckoutInput): void {
+  if (!input.consent) throw new HttpsError('invalid-argument', 'Please agree to the privacy notice');
+  if (!normalisePhone(input.phone)) throw new HttpsError('invalid-argument', 'Enter a phone number like 9123 4567 or +44 7700 900123');
+  if (!input.firstName.trim()) throw new HttpsError('invalid-argument', 'Enter your first name');
+}
+
+function guestBuyer(input: StartEventCheckoutInput): Buyer {
+  return {
+    firstName: input.firstName.trim(),
+    lastName: input.lastName.trim(),
+    email: input.email.trim().toLowerCase(),
+    phone: normalisePhone(input.phone)!,
+    marketing: input.marketing === true,
+  };
+}
+
+/** A signed-in student's details come from their record; a phone typed on the page fills a missing one. */
+function studentBuyer(student: DocumentSnapshot, input: StartEventCheckoutInput): Buyer {
+  if (!student.exists || student.get('status') === 'archived') throw new HttpsError('permission-denied', 'Your student account is not active. Buy as a guest instead.');
+  const email = String(student.get('email') ?? '').trim().toLowerCase();
+  if (!email) throw new HttpsError('failed-precondition', 'Your account has no email. Buy as a guest instead.');
+  const phone = (student.get('phone') as string | null | undefined) || normalisePhone(input.phone ?? '');
+  if (!phone) throw new HttpsError('invalid-argument', 'Enter a phone number like 9123 4567 or +44 7700 900123');
+  return {
+    firstName: String(student.get('preferredName') || student.get('firstName') || ''),
+    lastName: String(student.get('lastName') ?? ''),
+    email,
+    phone,
+    marketing: input.marketing === true,
+  };
+}
+
 export async function startEventCheckout(
   db: Firestore,
   client: HitPayClient | null,
   input: StartEventCheckoutInput,
   at: Date = new Date(),
 ): Promise<{ checkoutId: string; url: string }> {
-  if (!input.consent) throw new HttpsError('invalid-argument', 'Please agree to the privacy notice');
-  const phone = normalisePhone(input.phone);
-  if (!phone) throw new HttpsError('invalid-argument', 'Enter a phone number like 9123 4567 or +44 7700 900123');
-  const firstName = input.firstName.trim();
-  const lastName = input.lastName.trim();
-  const email = input.email.trim().toLowerCase();
-  if (!firstName) throw new HttpsError('invalid-argument', 'Enter your first name');
-
+  const asStudent = input.studentId ?? null;
+  if (!asStudent) checkGuest(input);
   const site = await db.collection('publicSchools').doc(input.host).get();
   if (!site.exists || site.get('site') !== 'learn') throw new HttpsError('failed-precondition', 'This site is not set up for tickets');
   const schoolId = site.get('schoolId') as string;
@@ -97,6 +137,7 @@ export async function startEventCheckout(
   const order = await db.runTransaction(async (tx) => {
     const [schoolSnap, ev, c] = await readAll(tx, school, eventRef, counter);
     if (!ev.exists || ev.get('published') !== true) notFound('Event');
+    const buyer = asStudent ? studentBuyer(await tx.get(school.collection('students').doc(asStudent)), input) : guestBuyer(input);
     if (ev.get('status') === 'cancelled') throw new HttpsError('failed-precondition', 'This event has been cancelled');
     const timeZone = (ev.get('timeZone') as string | undefined) ?? (schoolSnap.get('timezone') as string | undefined) ?? 'Asia/Singapore';
     const option = ((ev.get('options') as EventOption[] | undefined) ?? []).find((o) => o.key === input.optionKey);
@@ -145,24 +186,24 @@ export async function startEventCheckout(
       taxCents,
       amountCents: totalCents,
       currency,
-      buyer: { firstName, lastName, email, phone, marketing: input.marketing === true },
-      consentAt: Timestamp.fromDate(at),
-      studentId: null,
+      buyer,
+      consentAt: asStudent ? null : Timestamp.fromDate(at),
+      studentId: asStudent,
       status: 'pending',
       holdUntil: Timestamp.fromMillis(at.getTime() + EVENT_HOLD_MIN * 60_000),
       provider: 'hitpay',
-      createdBy: 'public',
+      createdBy: asStudent ? 'student' : 'public',
       createdAt: now(),
       updatedAt: now(),
     });
-    return { totalCents, currency, title: `${ev.get('title') as string} (${option.label})`, schoolName: schoolSnap.get('name') as string };
+    return { totalCents, currency, buyer, title: `${ev.get('title') as string} (${option.label})`, schoolName: schoolSnap.get('name') as string };
   });
 
   const req = await client.createPaymentRequest({
     amount: (order.totalCents / 100).toFixed(2),
     currency: order.currency,
-    email,
-    name: [firstName, lastName].filter(Boolean).join(' '),
+    email: order.buyer.email,
+    name: [order.buyer.firstName, order.buyer.lastName].filter(Boolean).join(' '),
     purpose: `${order.schoolName}: ${order.title} x${input.qty}`,
     referenceNumber: `${schoolId}.${ref.id}`,
     redirectUrl: `https://${input.host}/events/${input.eventId}?order=${ref.id}`,
@@ -223,7 +264,13 @@ export async function completeEventCheckout(
     const counterRef = school.collection('counters').doc('invoice');
     const [ev, counterSnap] = await readAll(tx, eventRef, counterRef);
     const buyer = snap.get('buyer') as { firstName: string; lastName: string; email: string; phone: string; marketing: boolean };
-    const onFile = (await tx.get(school.collection('students').where('email', '==', buyer.email))).docs.filter((d) => d.get('status') !== 'archived');
+    // Bought signed in: that student. Otherwise anyone on file with the buyer's email.
+    const ownerId = snap.get('studentId') as string | null;
+    const owner = ownerId ? await tx.get(school.collection('students').doc(ownerId)) : null;
+    const onFile =
+      owner?.exists && owner.get('status') !== 'archived'
+        ? [owner]
+        : (await tx.get(school.collection('students').where('email', '==', buyer.email))).docs.filter((d) => d.get('status') !== 'archived');
     const timeZone = (schoolSnap.get('timezone') as string | undefined) ?? 'Asia/Singapore';
     const title = (snap.get('eventTitle') as string | undefined) ?? 'Event';
     const qty = snap.get('qty') as number;

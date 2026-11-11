@@ -10,7 +10,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { onDocumentCreated, onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { defineSecret } from 'firebase-functions/params';
 import { z } from 'zod';
-import { HOLIDAY_COUNTRIES, LESSON_MODES, ROLES, WEEKDAYS, isWallDate, isWallTime, type HolidayCountry } from '@lessonkaki/shared';
+import { HOLIDAY_COUNTRIES, LESSON_MODES, ROLES, WEEKDAYS, isWallDate, isWallTime, type Claims, type HolidayCountry } from '@lessonkaki/shared';
 import * as alerts from './alerts';
 import { requireRole } from './auth';
 import * as attendance from './attendance';
@@ -526,17 +526,21 @@ export const hitpayWebhook = onRequest({ secrets: [HITPAY_KEYS, RESEND_API_KEY] 
 });
 
 // Event tickets (learn site /events): anyone can buy, no account. See events.ts.
-const StartEventCheckout = z.object({
-  eventId: id,
-  optionKey: id,
-  qty: z.number().int().min(1).max(20),
-  firstName: z.string().trim().min(1).max(80),
-  lastName: z.string().trim().max(80),
-  email: z.email().max(200),
-  phone: z.string().trim().min(6).max(30),
-  consent: z.literal(true),
-  marketing: z.boolean(),
-});
+const EventTicket = { eventId: id, optionKey: id, qty: z.number().int().min(1).max(20), marketing: z.boolean() };
+const StartEventCheckout = z.union([
+  // A guest: their details, and agreement to the privacy notice.
+  z.object({
+    ...EventTicket,
+    asStudent: z.literal(false).optional(),
+    firstName: z.string().trim().min(1).max(80),
+    lastName: z.string().trim().max(80),
+    email: z.email().max(200),
+    phone: z.string().trim().min(6).max(30),
+    consent: z.literal(true),
+  }),
+  // A signed-in student: details come from their record; a phone only if the record has none.
+  z.object({ ...EventTicket, asStudent: z.literal(true), phone: z.string().trim().max(30).optional() }),
+]);
 
 export const startEventCheckout = onCall({ secrets: [HITPAY_KEYS] }, async (req) => {
   const input = parse(StartEventCheckout, req.data);
@@ -544,8 +548,16 @@ export const startEventCheckout = onCall({ secrets: [HITPAY_KEYS] }, async (req)
   if (!origin) throw new HttpsError('invalid-argument', 'Open the event page in a browser');
   const host = new URL(origin).hostname;
   const site = await db().collection('publicSchools').doc(host).get();
-  const keys = site.exists ? checkout.parseKeyRing(HITPAY_KEYS.value())[site.get('schoolId') as string] : undefined;
-  return events.startEventCheckout(db(), keys ? checkout.hitpayClient(keys) : null, { ...input, host });
+  const schoolId = site.exists ? (site.get('schoolId') as string) : null;
+  const keys = schoolId ? checkout.parseKeyRing(HITPAY_KEYS.value())[schoolId] : undefined;
+  const client = keys ? checkout.hitpayClient(keys) : null;
+  if (input.asStudent) {
+    const studentId = schoolId ? (req.auth?.token as Claims | undefined)?.s?.[schoolId] : undefined;
+    if (!studentId) throw new HttpsError('unauthenticated', 'Sign in as a student first, or buy as a guest');
+    const ticket = { eventId: input.eventId, optionKey: input.optionKey, qty: input.qty, marketing: input.marketing };
+    return events.startEventCheckout(db(), client, { ...ticket, firstName: '', lastName: '', email: '', phone: input.phone ?? '', consent: false, host, studentId });
+  }
+  return events.startEventCheckout(db(), client, { ...input, host });
 });
 
 export const eventOrderStatus = onCall(async (req) => {
