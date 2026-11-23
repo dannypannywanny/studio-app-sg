@@ -3,7 +3,7 @@
 // same transaction as the change; a trigger sends it (functions/src/alerts.ts).
 
 /** What the owner can switch on and off in Settings. */
-export const ALERT_CATEGORIES = ['bookings', 'cancellations', 'payments', 'paymentProblems'] as const;
+export const ALERT_CATEGORIES = ['bookings', 'cancellations', 'payments', 'paymentProblems', 'leads'] as const;
 export type AlertCategory = (typeof ALERT_CATEGORIES)[number];
 
 /**
@@ -22,6 +22,7 @@ export const ALERT_TYPES = {
   'payment.succeeded': 'payments', // later: HitPay webhook (M4)
   'payment.failed': 'paymentProblems', // later: HitPay webhook (M4)
   'payment.abandoned': 'paymentProblems', // later: unpaid booking hold expired (M5)
+  'lead.added': 'leads',
 } as const satisfies Record<string, AlertCategory>;
 export type AlertType = keyof typeof ALERT_TYPES;
 
@@ -30,6 +31,7 @@ export const ALERT_CATEGORY_LABELS: Record<AlertCategory, { label: string; hint:
   cancellations: { label: 'Cancellations', hint: 'A student cancels or is taken off a lesson, or a lesson is cancelled' },
   payments: { label: 'Payments', hint: 'A payment is recorded or received online' },
   paymentProblems: { label: 'Payment problems', hint: 'An online payment fails or is not completed' },
+  leads: { label: 'New leads', hint: 'Someone new is added as a lead, by staff or from an event ticket' },
 };
 
 /** Stored on `schools/{schoolId}.alerts` (owner-editable). */

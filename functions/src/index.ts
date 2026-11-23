@@ -453,6 +453,16 @@ export const onAlertCreated = onDocumentCreated(
   },
 );
 
+/** A new lead, however it was added (Leads page, event ticket): the owner gets a 'New leads' alert. */
+export const onStudentCreated = onDocumentCreated(
+  { document: 'schools/{schoolId}/students/{studentId}', region: 'asia-southeast1', retry: true },
+  async (event) => {
+    if (event.data?.get('status') !== 'lead') return;
+    const { schoolId, studentId } = event.params;
+    await alerts.enqueueLeadAlert(db(), schoolId, studentId, (event.data.get('signupSource') as string | undefined) ?? null, new Date());
+  },
+);
+
 // Student sign-in links by email (learn site), sent with Resend from the school's own domain instead of
 // Firebase's noreply address. No sign-in needed to call it; it answers the same whoever asks.
 const SendSignInLink = z.object({ email: z.email().max(200) });

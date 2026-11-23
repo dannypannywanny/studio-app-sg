@@ -5,6 +5,7 @@ import {
   MAX_ATTEMPTS,
   SendError,
   deliverAlert,
+  enqueueLeadAlert,
   renderAlert,
   resendSender,
   type MailSender,
@@ -235,7 +236,7 @@ describe('settings', () => {
   it('defaults: everything on, to the school contact email; no address at all = skipped', async () => {
     expect(resolveAlertSettings(undefined, 'Hello@Example.com')).toEqual({
       to: ['hello@example.com'],
-      events: { bookings: true, cancellations: true, payments: true, paymentProblems: true },
+      events: { bookings: true, cancellations: true, payments: true, paymentProblems: true, leads: true },
       skipStaffActions: false,
     });
     expect(resolveAlertSettings({ to: ['a@x.co', 'nope', 'A@x.co ', 'b@x.co'] }).to).toEqual(['a@x.co', 'b@x.co']);
@@ -254,6 +255,29 @@ describe('settings', () => {
     const sender = new FakeSender();
     await deliverAll(t, sender);
     expect(sender.sent[0]!.from).toBe('Studio <notifications@studio.example>');
+  });
+});
+
+describe('new leads', () => {
+  it('one alert per lead, sent even with "skip staff actions" on; a repeat trigger adds nothing', async () => {
+    const t = await withAlerts(await school(), { to: [OWNER_EMAIL], skipStaffActions: true });
+    const ref = db.collection(`schools/${t.schoolId}/students`).doc();
+    await ref.set({ firstName: 'Lee', lastName: 'Ann', email: 'lee@example.com', phone: '+65 9000 0000', status: 'lead', notes: 'Wants a trial' });
+    expect(await enqueueLeadAlert(db, t.schoolId, ref.id, null, new Date())).toBe(true);
+    expect(await enqueueLeadAlert(db, t.schoolId, ref.id, null, new Date())).toBe(false);
+    const sender = new FakeSender();
+    expect(await deliver(t, sender, `lead_${ref.id}`)).toBe('sent');
+    expect(sender.sent).toHaveLength(1);
+    expect(sender.sent[0]!.subject).toBe('New lead: Lee Ann');
+    expect(sender.sent[0]!.text).toContain('lee@example.com · +65 9000 0000');
+    expect(sender.sent[0]!.text).toContain('Notes: Wants a trial');
+    expect(sender.sent[0]!.text).toContain(`https://teach.example.com/students/${ref.id}`);
+  });
+
+  it('the "New leads" switch turns it off', async () => {
+    const t = await withAlerts(await school(), { to: [OWNER_EMAIL], events: { leads: false } });
+    await enqueueLeadAlert(db, t.schoolId, 'someone', 'event', new Date());
+    expect(await deliver(t, new FakeSender(), 'lead_someone')).toBe('skipped');
   });
 });
 

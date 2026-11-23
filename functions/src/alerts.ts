@@ -87,7 +87,8 @@ export type AlertEvent =
       amountCents: number;
       currency: string;
       reason: string | null;
-    };
+    }
+  | { type: 'lead.added'; studentId: string; source: string | null };
 
 /**
  * Writes the alert in the caller's transaction. `set`, not `create`: the id is unique per change, and if
@@ -421,6 +422,19 @@ export async function renderAlert(
       path = data.invoiceId ? { label: 'Open the invoice', path: `invoices/${data.invoiceId as string}` } : null;
       break;
     }
+    case 'lead.added': {
+      const snap = await schoolRef(db, schoolId).collection('students').doc(data.studentId as string).get();
+      const name = nameOf(data.studentId as string);
+      subject = `New lead: ${name}`;
+      lines.push(`${name} was added as a lead.`);
+      const contact = [snap.get('email'), snap.get('phone')].filter((v): v is string => typeof v === 'string' && v.length > 0);
+      if (contact.length) lines.push(`Contact: ${contact.join(' · ')}`);
+      if (data.source === 'event') lines.push(`From an event ticket${snap.get('referralSource') ? ` (${snap.get('referralSource') as string})` : ''}.`);
+      const notes = snap.get('notes') as string | undefined;
+      if (notes) lines.push(`Notes: ${notes}`);
+      path = { label: 'Open the lead', path: `students/${data.studentId as string}` };
+      break;
+    }
   }
 
   const link = path && teachHost ? { label: path.label, url: `https://${teachHost}/${path.path}` } : null;
@@ -434,4 +448,31 @@ export async function renderAlert(
     '</div>',
   ].join('');
   return { subject, lines, link, text, html };
+}
+
+/**
+ * A new lead (status 'lead') was created, by staff on the Leads page or by an event ticket purchase.
+ * Written by the students trigger, not in the caller's transaction (staff create leads from the client).
+ * The id is per student, so a retried trigger never alerts twice. Actor 'system': the owner wants these
+ * even with "only what students do" turned on.
+ */
+export async function enqueueLeadAlert(db: Firestore, schoolId: string, studentId: string, source: string | null, at: Date): Promise<boolean> {
+  const { type, ...data } = { type: 'lead.added' as const, studentId, source };
+  try {
+    await schoolRef(db, schoolId).collection('alerts').doc(`lead_${studentId}`).create({
+      type,
+      category: ALERT_TYPES[type],
+      data,
+      actorUid: 'system',
+      actorRole: 'system',
+      status: 'pending',
+      attempts: 0,
+      createdAt: now(),
+      expireAt: Timestamp.fromMillis(at.getTime() + RETENTION_DAYS * DAY_MS),
+    });
+    return true;
+  } catch (err) {
+    if ((err as { code?: number }).code === 6) return false; // ALREADY_EXISTS
+    throw err;
+  }
 }
