@@ -124,3 +124,35 @@ export function studentName(s: Pick<Student, 'firstName' | 'lastName' | 'preferr
   if (!s) return 'Unknown student';
   return [s.preferredName || s.firstName, s.lastName].filter(Boolean).join(' ');
 }
+
+/** Country calling code for numbers saved without one, from the school's time zone. */
+const DIAL_CODES: Record<string, string> = {
+  'Asia/Singapore': '65',
+  'Asia/Kuala_Lumpur': '60',
+  'Asia/Jakarta': '62',
+  'Asia/Manila': '63',
+  'Asia/Bangkok': '66',
+  'Asia/Hong_Kong': '852',
+  'Australia/Sydney': '61',
+  'Australia/Melbourne': '61',
+  'Europe/London': '44',
+};
+
+/** wa.me link for a phone number as typed (any spacing; "+65 9123 4567", "6591234567" or local "9123 4567"). */
+export function whatsappUrl(phone: string, timeZone: string): string | null {
+  const trimmed = phone.trim();
+  let digits = trimmed.replace(/\D/g, '');
+  if (!digits) return null;
+  if (trimmed.startsWith('00')) digits = digits.slice(2);
+  else if (!/^\D*\+/.test(trimmed)) {
+    const cc = DIAL_CODES[timeZone];
+    if (cc && !digits.startsWith(cc)) digits = cc + digits.replace(/^0+/, '');
+    else if (cc && digits.length <= 8) digits = cc + digits; // local number that happens to start with the code
+  }
+  return `https://wa.me/${digits}`;
+}
+
+export function useWhatsappUrl() {
+  const tz = useTimeZone();
+  return (phone: string) => whatsappUrl(phone, tz);
+}

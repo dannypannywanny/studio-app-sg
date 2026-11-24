@@ -582,3 +582,12 @@ body.sheet-open { overflow: hidden; }
 
 /* Event session picture preview (the learn page shows it as a 3:2 banner). */
 .event-pic { display: block; width: 100%; max-width: 420px; aspect-ratio: 3 / 2; object-fit: cover; border-radius: 12px; margin-bottom: 8px; }
+
+/* WhatsApp shortcut beside a phone number */
+.wa-btn {
+  display: inline-flex; align-items: center; justify-content: center; vertical-align: middle;
+  width: 26px; height: 26px; margin-left: var(--space-1); border-radius: 50%;
+  color: #1a8f4c; background: color-mix(in oklab, #25d366 16%, transparent);
+}
+.wa-btn:hover { background: #25d366; color: #fff; }
+.wa-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
