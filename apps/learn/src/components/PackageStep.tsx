@@ -10,7 +10,13 @@ import { dayLabel } from '../format';
 import { useDoc, useEnrolments, useQuery } from '../hooks';
 import type { AvailabilityResult, Profile } from '../types';
 
-const startCheckout = call<{ schoolId: string; packageId: string }, { checkoutId: string; url: string }>('startCheckout');
+const startCheckout = call<{ schoolId: string; packageId: string; code?: string | null }, { checkoutId: string; url: string }>('startCheckout');
+const previewDiscountCode = call<
+  { schoolId: string; packageId: string; code: string },
+  { code: string; discountCents: number; totalCents: number }
+>('previewDiscountCode');
+
+type Quote = { code: string; discountCents: number; totalCents: number };
 
 interface Pkg {
   name: string;
@@ -105,6 +111,11 @@ export function PackageStep({
   );
   const [buying, setBuying] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [codeText, setCodeText] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [codeError, setCodeError] = useState<string | null>(null);
+  /** The applied code's price for each package it works on. */
+  const [quotes, setQuotes] = useState<Record<string, Quote> | null>(null);
   const forSale = packages.data.filter((p) => !teacher.subjectId || p.subjectId === teacher.subjectId).sort((a, b) => a.priceCents - b.priceCents);
   const free = credit.sessionsAvailable - credit.upcomingLessons;
 
@@ -114,12 +125,31 @@ export function PackageStep({
     setBuying(packageId);
     setError(null);
     try {
-      const { url } = await startCheckout({ schoolId, packageId });
+      const { url } = await startCheckout({ schoolId, packageId, code: quotes?.[packageId]?.code ?? null });
       window.location.assign(url); // HitPay's checkout; it sends them back to /book?checkout=...
     } catch (err) {
       setError(errorMessage(err));
       setBuying(null);
     }
+  }
+
+  // A code can be limited to some packages: try it on each one shown, keep the ones it works on.
+  async function applyCode() {
+    setCodeError(null);
+    setQuotes(null);
+    if (!codeText.trim() || forSale.length === 0) return;
+    setChecking(true);
+    const results = await Promise.allSettled(forSale.map((p) => previewDiscountCode({ schoolId, packageId: p.id, code: codeText })));
+    const ok: Record<string, Quote> = {};
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled') ok[forSale[i]!.id] = r.value;
+    });
+    if (Object.keys(ok).length) setQuotes(ok);
+    else {
+      const first = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+      setCodeError(first ? errorMessage(first.reason) : 'That discount code is not valid');
+    }
+    setChecking(false);
   }
 
   const trial = profile?.whatsapp ? (
@@ -165,6 +195,40 @@ export function PackageStep({
         ) : forSale.length === 0 ? (
           <p className="meta">No packages are sold online right now. Please contact the studio.</p>
         ) : (
+          <>
+          <form
+            className="stack"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void applyCode();
+            }}
+          >
+            <label className="field">
+              <span>Discount code</span>
+              <input
+                value={codeText}
+                onChange={(e) => {
+                  setCodeText(e.target.value);
+                  setQuotes(null);
+                  setCodeError(null);
+                }}
+                maxLength={40}
+                autoCapitalize="characters"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
+            <button type="submit" className="btn btn-ghost" disabled={checking || buying !== null || !codeText.trim()}>
+              {checking ? 'Checking' : 'Apply code'}
+            </button>
+            {codeError && <p className="form-error" role="alert">{codeError}</p>}
+            {quotes && (
+              <p role="status">
+                {Object.values(quotes)[0]!.code} applied to{' '}
+                {forSale.filter((p) => quotes[p.id]).map((p) => p.name).join(', ')}.
+              </p>
+            )}
+          </form>
           <ul className="pkg-list">
             {forSale.map((p) => (
               <li key={p.id}>
@@ -175,12 +239,13 @@ export function PackageStep({
                     {p.validityDays ? `, use within ${p.validityDays} days` : ''}
                   </span>
                 </div>
-                <button className="btn btn-sm" onClick={() => buy(p.id)} disabled={buying !== null}>
-                  {buying === p.id ? 'Opening' : `Pay ${formatMoney(p.priceCents)}`}
+                <button className="btn btn-sm" onClick={() => buy(p.id)} disabled={buying !== null || checking}>
+                  {buying === p.id ? 'Opening' : `Pay ${formatMoney(quotes?.[p.id]?.totalCents ?? p.priceCents)}`}
                 </button>
               </li>
             ))}
           </ul>
+          </>
         )}
         {error && <p className="form-error" role="alert">{error}</p>}
         <p className="meta">Pay online with HitPay (card, PayNow, GrabPay, ShopeePay and more). Your sessions are added as soon as the payment goes through.</p>
