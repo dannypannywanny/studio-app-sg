@@ -359,6 +359,13 @@ export const voidInvoice = onCall(async (req) => {
   return money.voidInvoice(db(), input, actor);
 });
 
+/** Owner alert for online payments started but not finished (HitPay doesn't tell us when someone gives up). */
+export const flagAbandonedCheckouts = onSchedule({ ...JOB, schedule: 'every 15 minutes' }, async () => {
+  const res = await jobs.forEachSchool(db(), (schoolId) => checkout.flagAbandonedCheckouts(db(), schoolId));
+  const n = res.reduce((a, b) => a + b, 0);
+  if (n) console.log(`flagAbandonedCheckouts: ${n} alerts`);
+});
+
 export const markOverdue = onSchedule({ ...JOB, schedule: 'every day 08:00' }, async () => {
   const res = await money.markOverdueAll(db());
   console.log(`markOverdue: ${res.flagged} invoices flagged`);

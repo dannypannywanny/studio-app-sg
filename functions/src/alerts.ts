@@ -84,6 +84,10 @@ export type AlertEvent =
       /** A public booking may not have a student yet; then the guest's name comes from the booking. */
       studentId: string | null;
       bookingId: string | null;
+      /** An online checkout (package or event tickets); a guest buyer's name and contact come from it. */
+      checkoutId?: string | null;
+      /** What they were buying, e.g. the package name. */
+      item?: string | null;
       amountCents: number;
       currency: string;
       reason: string | null;
@@ -404,7 +408,17 @@ export async function renderAlert(
     }
     case 'payment.failed':
     case 'payment.abandoned': {
-      let who = typeof data.studentId === 'string' ? nameOf(data.studentId) : null;
+      const sid = typeof data.studentId === 'string' ? data.studentId : null;
+      let who = sid ? nameOf(sid) : null;
+      let contact: unknown[] = [];
+      if (sid) {
+        const s = await schoolRef(db, schoolId).collection('students').doc(sid).get();
+        contact = [s.get('email'), s.get('phone')];
+      } else if (typeof data.checkoutId === 'string') {
+        const c = await schoolRef(db, schoolId).collection('checkouts').doc(data.checkoutId).get();
+        who = (c.get('buyer.name') as string | undefined) ?? null;
+        contact = [c.get('buyer.email'), c.get('buyer.phone')];
+      }
       if (!who && typeof data.bookingId === 'string') {
         const booking = await schoolRef(db, schoolId).collection('bookings').doc(data.bookingId).get();
         who = (booking.get('guest.name') as string | undefined) ?? null;
@@ -417,9 +431,16 @@ export async function renderAlert(
           ? `An online payment of ${amount} from ${who} did not go through.`
           : `${who} started paying ${amount} online but did not finish.`,
       );
+      if (data.item) lines.push(`For: ${data.item as string}`);
+      const reach = contact.filter((v): v is string => typeof v === 'string' && v.length > 0);
+      if (reach.length) lines.push(`Contact: ${reach.join(' · ')}`);
       if (data.invoiceNumber) lines.push(`Invoice: ${data.invoiceNumber as string}`);
       if (data.reason) lines.push(`Reason given: ${data.reason as string}`);
-      path = data.invoiceId ? { label: 'Open the invoice', path: `invoices/${data.invoiceId as string}` } : null;
+      path = data.invoiceId
+        ? { label: 'Open the invoice', path: `invoices/${data.invoiceId as string}` }
+        : sid
+          ? { label: 'Open the student', path: `students/${sid}` }
+          : null;
       break;
     }
     case 'lead.added': {

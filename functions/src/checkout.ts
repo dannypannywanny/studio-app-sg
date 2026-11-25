@@ -10,6 +10,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Timestamp, type Firestore } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
+import { enqueueAlert } from './alerts';
 import { sellPackage } from './credits';
 import { completeEventCheckout, type EventMail } from './events';
 import { notFound, now, schoolRef, type Actor } from './db';
@@ -151,6 +152,72 @@ export async function startCheckout(
 }
 
 // ---------------------------------------------------------------------------------------------
+// Payment problem alerts
+// ---------------------------------------------------------------------------------------------
+
+/** The alert fields every checkout (package or event tickets) can fill. */
+function checkoutAlertFields(c: FirebaseFirestore.DocumentSnapshot) {
+  const item = c.get('kind') === 'event' ? `${c.get('eventTitle') as string} (${c.get('optionLabel') as string})` : (c.get('packageName') as string);
+  const code = c.get('discountCode') as string | null | undefined;
+  return {
+    provider: (c.get('provider') as string | undefined) ?? 'hitpay',
+    invoiceId: null,
+    invoiceNumber: null,
+    studentId: (c.get('studentId') as string | null | undefined) ?? null,
+    bookingId: null,
+    checkoutId: c.id,
+    item: code ? `${item}, with code ${code}` : item,
+    amountCents: c.get('amountCents') as number,
+    currency: (c.get('currency') as string | undefined) ?? 'SGD',
+    reason: null,
+  };
+}
+
+/** A checkout still unpaid this long after it was opened counts as not completed. */
+export const ABANDONED_AFTER_MIN = 30;
+/** Older checkouts are never alerted on (so switching this on doesn't email about old history). */
+const ABANDONED_LOOKBACK_MS = 24 * 3_600_000;
+
+/**
+ * Emails the owner about online payments started but not finished (HitPay sends no webhook when someone
+ * just closes the page). One alert per buyer for their latest attempt: someone who retries three times
+ * gets one email, nothing while they may still be paying, and nothing if they paid in the end.
+ * Each checkout is marked `abandonAlertedAt` so it is never looked at twice; the checkout stays
+ * 'pending', so a late payment still goes through the webhook as normal.
+ */
+export async function flagAbandonedCheckouts(db: Firestore, schoolId: string, at: Date = new Date()): Promise<number> {
+  const school = schoolRef(db, schoolId);
+  const snap = await school.collection('checkouts').where('createdAt', '>=', Timestamp.fromMillis(at.getTime() - ABANDONED_LOOKBACK_MS)).get();
+  const cutoff = at.getTime() - ABANDONED_AFTER_MIN * 60_000;
+  const byBuyer = new Map<string, FirebaseFirestore.QueryDocumentSnapshot[]>();
+  for (const d of snap.docs) {
+    const key = (d.get('studentId') as string | null) ?? ((d.get('buyer.email') as string | undefined)?.toLowerCase() || d.id);
+    byBuyer.set(key, [...(byBuyer.get(key) ?? []), d]);
+  }
+  let alerted = 0;
+  for (const docs of byBuyer.values()) {
+    const open = docs.filter((d) => d.get('status') === 'pending' && !d.get('abandonAlertedAt'));
+    if (open.length === 0) continue;
+    const latest = docs.reduce((a, b) => ((b.get('createdAt') as Timestamp).toMillis() > (a.get('createdAt') as Timestamp).toMillis() ? b : a));
+    if ((latest.get('createdAt') as Timestamp).toMillis() > cutoff) continue; // may still be paying
+    // Alert only when their latest attempt is the unfinished one; after a payment or a failure (which
+    // has its own alert) the earlier open attempts are just marked.
+    const alertOn = open.includes(latest) ? latest : null;
+    await db.runTransaction(async (tx) => {
+      const fresh = await Promise.all(open.map((d) => tx.get(d.ref)));
+      const still = fresh.filter((d) => d.get('status') === 'pending' && !d.get('abandonAlertedAt'));
+      for (const d of still) tx.update(d.ref, { abandonAlertedAt: Timestamp.fromDate(at) });
+      const target = alertOn && still.find((d) => d.id === alertOn.id);
+      if (target) {
+        enqueueAlert(tx, school, `checkout_${target.id}_abandoned`, { type: 'payment.abandoned', ...checkoutAlertFields(target) }, { uid: 'system', role: 'system' }, at);
+        alerted++;
+      }
+    });
+  }
+  return alerted;
+}
+
+// ---------------------------------------------------------------------------------------------
 // hitpayWebhook
 // ---------------------------------------------------------------------------------------------
 
@@ -203,12 +270,16 @@ export async function handleHitPayWebhook(
   const school = schoolRef(db, schoolId);
   const ref = school.collection('checkouts').doc(checkoutId);
   if (payload.status !== 'completed') {
-    // A failed attempt: note it so the studio can follow up. Nothing is sold; the student can retry.
+    // A failed attempt: note it and email the owner so the studio can follow up. Nothing is sold; the
+    // student can retry.
     if (payload.status !== 'failed') return 'ignored';
-    const pending = await ref.get();
-    if (!pending.exists || pending.get('status') !== 'pending') return 'ignored';
-    await ref.update({ status: 'failed', failedAt: Timestamp.fromDate(at), updatedAt: now() });
-    return 'failed';
+    return db.runTransaction(async (tx) => {
+      const pending = await tx.get(ref);
+      if (!pending.exists || pending.get('status') !== 'pending') return 'ignored' as const;
+      tx.update(ref, { status: 'failed', failedAt: Timestamp.fromDate(at), updatedAt: now() });
+      enqueueAlert(tx, school, `checkout_${checkoutId}_failed`, { type: 'payment.failed', ...checkoutAlertFields(pending) }, { uid: 'hitpay', role: 'system' }, at);
+      return 'failed' as const;
+    });
   }
 
   const snap = await ref.get();

@@ -2,7 +2,8 @@ import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { wallClockToUtc } from '@lessonkaki/shared';
 import { bookLesson, getAvailability } from '../src/booking';
-import { handleHitPayWebhook, startCheckout, validSignature, type HitPayClient, type PaymentRequest } from '../src/checkout';
+import { Timestamp } from 'firebase-admin/firestore';
+import { flagAbandonedCheckouts, handleHitPayWebhook, startCheckout, validSignature, type HitPayClient, type PaymentRequest } from '../src/checkout';
 import type { Actor } from '../src/db';
 import { db, sell, summary, withInvariant, type TestSchool } from './helpers';
 
@@ -105,12 +106,58 @@ describe('hitpayWebhook', () => {
     const failed = body({ id: 'req-1', status: 'failed', amount: '300.00', reference_number: `${t.schoolId}.${checkoutId}` });
     expect(await handleHitPayWebhook(db, keys, failed, sign(failed), NOW)).toBe('failed');
     expect((await db.doc(`schools/${t.schoolId}/checkouts/${checkoutId}`).get()).get('status')).toBe('failed');
+    const alert = (await db.doc(`schools/${t.schoolId}/alerts/checkout_${checkoutId}_failed`).get()).data()!;
+    expect(alert).toMatchObject({ type: 'payment.failed', category: 'paymentProblems', status: 'pending', data: { studentId: t.studentId, amountCents: 30000, checkoutId } });
     // A later successful payment for the same checkout still goes through.
     await db.doc(`schools/${t.schoolId}/checkouts/${checkoutId}`).update({ status: 'pending' });
     const cheap = completed(t, checkoutId, '3.00');
     expect(await handleHitPayWebhook(db, keys, cheap, sign(cheap), NOW)).toBe('ignored');
     expect(await summary(t)).toEqual({ sessionsAvailable: 0, sessionsOwed: 0 });
     expect(validSignature(Buffer.from('x'), sign(Buffer.from('x')), SALT)).toBe(true);
+  });
+});
+
+describe('flagAbandonedCheckouts', () => {
+  const at = (iso: string) => Timestamp.fromDate(new Date(iso));
+  async function open(t: TestSchool, id: string, createdAt: string, status = 'pending', studentId: string | null = t.studentId) {
+    await db.doc(`schools/${t.schoolId}/checkouts/${id}`).set({
+      studentId, packageName: '12 Sessions (3 months)', amountCents: 75000, currency: 'SGD', status, provider: 'hitpay', createdAt: at(createdAt),
+      ...(studentId ? {} : { kind: 'event', eventTitle: 'Masterclass', optionLabel: 'Both days', buyer: { name: 'Guest Person', email: 'g@example.test' } }),
+    });
+  }
+  const alerts = async (t: TestSchool) => (await db.collection(`schools/${t.schoolId}/alerts`).get()).docs.filter((d) => d.get('type') === 'payment.abandoned');
+
+  it('emails once per buyer for their latest unfinished attempt, after 30 minutes, never twice', async () => {
+    const t = await school();
+    await open(t, 'a1', '2027-01-03T09:40:00Z');
+    await open(t, 'a2', '2027-01-03T09:44:00Z');
+    await open(t, 'a3', '2027-01-03T10:00:00Z');
+    expect(await flagAbandonedCheckouts(db, t.schoolId, new Date('2027-01-03T10:20:00Z'))).toBe(0); // still paying
+    expect(await flagAbandonedCheckouts(db, t.schoolId, new Date('2027-01-03T10:31:00Z'))).toBe(1);
+    const sent = await alerts(t);
+    expect(sent.map((d) => d.id)).toEqual(['checkout_a3_abandoned']);
+    expect(sent[0]!.data()).toMatchObject({ category: 'paymentProblems', data: { studentId: t.studentId, item: '12 Sessions (3 months)', amountCents: 75000 } });
+    expect(await flagAbandonedCheckouts(db, t.schoolId, new Date('2027-01-03T11:00:00Z'))).toBe(0);
+    // The checkout stays pending, so a late payment still completes.
+    expect((await db.doc(`schools/${t.schoolId}/checkouts/a3`).get()).get('status')).toBe('pending');
+  });
+
+  it('stays quiet when they paid in the end, and covers guest event buyers', async () => {
+    const t = await school();
+    await open(t, 'b1', '2027-01-03T09:00:00Z');
+    await open(t, 'b2', '2027-01-03T09:05:00Z', 'paid');
+    await open(t, 'g1', '2027-01-03T09:00:00Z', 'pending', null);
+    expect(await flagAbandonedCheckouts(db, t.schoolId, new Date('2027-01-03T10:00:00Z'))).toBe(1);
+    const sent = await alerts(t);
+    expect(sent.map((d) => d.id)).toEqual(['checkout_g1_abandoned']);
+    expect(sent[0]!.get('data.item')).toBe('Masterclass (Both days)');
+    expect((await db.doc(`schools/${t.schoolId}/checkouts/b1`).get()).get('abandonAlertedAt')).toBeTruthy();
+  });
+
+  it('ignores checkouts older than a day', async () => {
+    const t = await school();
+    await open(t, 'old', '2027-01-01T09:00:00Z');
+    expect(await flagAbandonedCheckouts(db, t.schoolId, new Date('2027-01-03T10:00:00Z'))).toBe(0);
   });
 });
 
